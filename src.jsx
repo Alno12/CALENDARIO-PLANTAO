@@ -33,6 +33,7 @@ const fmtDateLong = s => { const d = pd(s); return `${d.getDate()} de ${MONTHS_S
 const fmtDateShort = s => { const d = pd(s); return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`; };
 const fmtDayMon = s => { const d = pd(s); return `${d.getDate()} ${MONTHS_S[d.getMonth()]}`; };
 const fmtWdDay = s => { const d = pd(s); return `${WD[d.getDay()]}, ${pad(d.getDate())}/${pad(d.getMonth() + 1)}`; };
+const fmtDayMonY = s => { const d = pd(s); const y = new Date().getFullYear(); return `${d.getDate()} de ${MONTHS_S[d.getMonth()]}.${d.getFullYear() === y ? "" : ` de ${d.getFullYear()}`}`; };
 const relDay = s => { const n = daysBetween(todayStr(), s); return n === 0 ? "hoje" : n === 1 ? "amanhã" : n === -1 ? "ontem" : n > 1 ? `em ${n} dias` : `há ${-n} dias`; };
 
 /* horas e duração (plantões podem passar de 24 h) */
@@ -954,301 +955,191 @@ function CalendarView({ T, data, cursor, setCursor, sel, setSel, openCreate, ope
 }
 
 /* ═══════════════ PAGAMENTOS ═══════════════
-   Duas contas diferentes, que antes se misturavam:
-   · TRABALHO  (competência) → pela data do plantão: quanto você produziu no mês.
-   · CAIXA     (financeiro)  → recebido = data em que o dinheiro entrou (paidAt);
-                               a receber = data prevista (paymentDate) dos não pagos.
-   Plantões marcados como não realizados ficam fora de tudo.                      */
+   Duas perguntas, nada além disso:
+   · A RECEBER → quanto me devem e quando cai (lista de todos os meses).
+   · RECEBIDOS → quanto caiu na conta em cada mês.
+   O "quanto eu trabalhei" mora no Resumo.                                  */
 function PaymentsView({ T, data, cursor, setCursor, openEdit, togglePaid, markPaid, setDialog, setData }) {
-  const [tab, setTab] = useState("pay");        // pay = a receber · got = recebidos · work = trabalhados
-  const [info, setInfo] = useState(false);
+  const [tab, setTab] = useState("pay");
   const [filt, setFilt] = useState(false);
-  const [openNoDate, setOpenNoDate] = useState(false);
   const y = cursor.getFullYear(), m = cursor.getMonth();
   const mk = `${y}-${pad(m + 1)}`;
   const today = todayStr();
   const sum = arr => arr.reduce((a, s) => a + (s.value || 0), 0);
-  const isCurrent = mk === mKey(today);
-
   const st = data.settings;
-  const byLoc = !!st.groupByLoc;
-  const desc = !!st.sortDesc;                          // padrão: mais antigos primeiro
   const hidden = st.hiddenLocs || [];
-  const locOk = s => !hidden.includes(s.locationId || "_none");
-  const S = useMemo(() => data.shifts.filter(s => isOn(s) && locOk(s)), [data.shifts, hidden]);
+  const S = useMemo(() => data.shifts.filter(s => isOn(s) && !hidden.includes(s.locationId || "_none")), [data.shifts, hidden]);
 
-  const worked = useMemo(() => S.filter(s => mKey(s.date) === mk), [S, mk]);
-  const got = useMemo(() => S.filter(s => s.paid && mKey(paidAtOf(s)) === mk), [S, mk]);
-  const due = useMemo(() => S.filter(s => !s.paid && s.paymentDate && mKey(s.paymentDate) === mk), [S, mk]);
-  const overdueAll = useMemo(() => S.filter(s => isOverdue(s, today)), [S, today]);
-  const oldOverdue = useMemo(() => overdueAll.filter(s => mKey(s.paymentDate) < mk), [overdueAll, mk]);
-  const noDate = useMemo(() => S.filter(s => !s.paid && !s.paymentDate), [S]);
+  /* ── a receber: tudo que ainda não foi pago, de qualquer mês ── */
+  const pend = useMemo(() => S.filter(s => !s.paid).sort((a, b) => (a.paymentDate || "9999").localeCompare(b.paymentDate || "9999")), [S]);
+  const pendV = sum(pend);
+  const late = pend.filter(s => s.paymentDate && s.paymentDate < today);
+  const lateV = sum(late);
+  const noDate = pend.filter(s => !s.paymentDate);
 
-  const gotV = sum(got), dueV = sum(due);
-  const lateM = due.filter(s => s.paymentDate < today), lateMV = sum(lateM);
-  const openV = dueV - lateMV;
-  const expected = gotV + dueV;
-  const pct = expected > 0 ? (gotV >= expected ? 100 : Math.min(99, Math.floor(gotV / expected * 100))) : 0;
-  const workedV = sum(worked);
-  const workedH = worked.reduce((a, s) => a + shiftHours(s), 0);
-  const workedPaidV = sum(worked.filter(s => s.paid));
-  const overdueV = sum(overdueAll);
-  const pendingV = sum(S.filter(s => !s.paid));
+  const buckets = useMemo(() => {
+    const t = new Date();
+    return [0, 1, 2].map(k => {
+      const d = new Date(t.getFullYear(), t.getMonth() + k, 1), key = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+      const arr = pend.filter(s => mKey(s.paymentDate) === key && s.paymentDate >= today);
+      return { d, key, v: sum(arr) };
+    });
+  }, [pend, today]);
 
-  const forecast = useMemo(() => [1, 2, 3].map(k => {
-    const d = new Date(y, m + k, 1), key = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
-    const arr = S.filter(s => !s.paid && mKey(s.paymentDate) === key);
-    return { d, key, v: sum(arr), n: arr.length };
-  }), [S, y, m]);
+  /* ── recebidos: o que caiu na conta no mês aberto ── */
+  const got = useMemo(() => S.filter(s => s.paid && mKey(paidAtOf(s)) === mk).sort((a, b) => paidAtOf(b).localeCompare(paidAtOf(a))), [S, mk]);
+  const gotV = sum(got);
+  const gotYear = useMemo(() => sum(S.filter(s => s.paid && paidAtOf(s).slice(0, 4) === String(y))), [S, y]);
 
-  const items = tab === "pay" ? due : tab === "got" ? got : worked;
-  const keyOf = s => tab === "pay" ? s.paymentDate : tab === "got" ? paidAtOf(s) : s.date;
-  const groups = useMemo(() => {
-    if (byLoc) {
-      const g = {};
-      for (const s of items) { const k = s.locationId || "_none"; (g[k] = g[k] || []).push(s); }
-      return Object.entries(g)
-        .map(([k, arr]) => ({ k, arr: arr.slice().sort((a, b) => keyOf(a).localeCompare(keyOf(b))) }))
-        .sort((a, b) => sum(b.arr) - sum(a.arr));
-    }
+  const groupBy = (arr, keyFn) => {
     const g = {};
-    for (const s of items) { const k = keyOf(s); (g[k] = g[k] || []).push(s); }
-    return Object.entries(g).sort((a, b) => (desc ? b[0].localeCompare(a[0]) : a[0].localeCompare(b[0]))).map(([k, arr]) => ({ k, arr }));
-  }, [items, byLoc, tab, desc]);
+    for (const s of arr) { const k = keyFn(s) || ""; (g[k] = g[k] || []).push(s); }
+    return Object.entries(g);
+  };
+  const payGroups = useMemo(() => groupBy(pend, s => s.paymentDate).sort((a, b) => (a[0] || "9999").localeCompare(b[0] || "9999")), [pend]);
+  const gotGroups = useMemo(() => groupBy(got, s => paidAtOf(s)).sort((a, b) => b[0].localeCompare(a[0])), [got]);
 
   const receiveGroup = (arr, label) => setDialog({
-    title: "Marcar como recebido?",
+    title: "Já caiu na conta?",
     msg: `${arr.length} ${arr.length === 1 ? "plantão" : "plantões"} · ${fmtBRL(sum(arr))}${label ? ` — ${label}` : ""}`,
     options: [{ label: "Sim, recebi", primary: true, fn: () => markPaid(arr.map(s => s.id), true) }],
   });
 
-  const bigLabel = tab === "pay" ? "A receber em" : tab === "got" ? "Recebido em" : "Trabalhado em";
-  const bigValue = tab === "pay" ? dueV : tab === "got" ? gotV : workedV;
-  const emptyMsg = tab === "pay" ? "Nada previsto para receber neste mês."
-    : tab === "got" ? "Nenhum recebimento registrado neste mês." : "Nenhum plantão realizado neste mês.";
-  const stripe = `repeating-linear-gradient(45deg, ${T.amber} 0 4px, ${T.amberSoft} 4px 8px)`;
-  const bar = expected > 0 ? [{ w: gotV / expected, bg: T.accent }, { w: openV / expected, bg: stripe }, { w: lateMV / expected, bg: T.red }] : [];
-  const filtOn = byLoc || hidden.length > 0 || desc;
-
-  const Legend = ({ color, stripeBg, label, value, strong, icon }) => (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-      <span style={{ color: strong || T.sub, display: "flex", alignItems: "center", gap: 8, fontSize: 13.5 }}>
-        {icon || <span style={{ width: 9, height: 9, borderRadius: 3, background: stripeBg || color, flexShrink: 0 }} />}
-        {label}
-      </span>
-      <b style={{ color: strong || T.text, fontSize: 14, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(value)}</b>
-    </div>
+  const eyeBtn = (
+    <button onClick={() => setData(d => ({ ...d, settings: { ...d.settings, hideValues: !d.settings.hideValues } }))}
+      aria-label={st.hideValues ? "Mostrar valores" : "Ocultar valores"}
+      style={{ border: "none", background: "transparent", color: st.hideValues ? T.accent : T.sub, cursor: "pointer", padding: 6, display: "grid", placeItems: "center" }}>
+      <Ic path={st.hideValues ? P.eyeOff : P.eye} size={19} />
+    </button>
   );
 
   return (
     <div style={{ padding: "10px 16px 0" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
         <Segmented T={T} value={tab} onChange={setTab} style={{ flex: 1 }}
-          options={[["pay", "A receber"], ["got", "Recebidos"], ["work", "Trabalhados"]]} />
+          options={[["pay", "A receber"], ["got", "Já recebi"]]} />
         <div style={{ position: "relative", flexShrink: 0 }}>
           <IconBtn T={T} icon={P.filter} label="Filtros" onClick={() => setFilt(true)} />
-          {filtOn && <span style={{ position: "absolute", top: 1, right: 1, width: 9, height: 9, borderRadius: 99, background: T.accent, border: `2px solid ${T.bg}` }} />}
+          {hidden.length > 0 && <span style={{ position: "absolute", top: 1, right: 1, width: 9, height: 9, borderRadius: 99, background: T.accent, border: `2px solid ${T.bg}` }} />}
         </div>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 16 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
-          <button onClick={() => setCursor(new Date(y, m - 1, 1))} aria-label="Mês anterior" style={{ border: "none", background: "transparent", color: T.sub, cursor: "pointer", padding: "6px 4px" }}><Ic path={P.chevL} size={19} /></button>
-          <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 21, color: T.text, letterSpacing: -.3 }}>{MONTHS[m]} <span style={{ color: T.sub, fontWeight: 500 }}>{y}</span></div>
-          <button onClick={() => setCursor(new Date(y, m + 1, 1))} aria-label="Próximo mês" style={{ border: "none", background: "transparent", color: T.sub, cursor: "pointer", padding: "6px 4px" }}><Ic path={P.chevR} size={19} /></button>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {!isCurrent && <button onClick={() => { const t = new Date(); setCursor(new Date(t.getFullYear(), t.getMonth(), 1)); }} style={{ border: "none", background: "transparent", color: T.accent, fontWeight: 700, fontSize: 13.5, cursor: "pointer", fontFamily: "inherit", padding: "6px 4px" }}>Hoje</button>}
-          <button onClick={() => setData(d => ({ ...d, settings: { ...d.settings, hideValues: !d.settings.hideValues } }))}
-            aria-label={st.hideValues ? "Mostrar valores" : "Ocultar valores"}
-            style={{ border: "none", background: "transparent", color: st.hideValues ? T.accent : T.sub, cursor: "pointer", padding: 6, display: "grid", placeItems: "center" }}>
-            <Ic path={st.hideValues ? P.eyeOff : P.eye} size={19} />
-          </button>
-        </div>
-      </div>
-
-      <Card T={T} style={{ marginTop: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ fontSize: 12.5, color: T.sub }}>{bigLabel} {MONTHS_S[m]}.</span>
-          <button onClick={() => setInfo(true)} aria-label="Como as contas são feitas" style={{ border: "none", background: T.chip, color: T.sub, width: 22, height: 22, borderRadius: 999, cursor: "pointer", fontWeight: 800, fontSize: 11.5, fontFamily: "inherit" }}>?</button>
-        </div>
-        <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 33, color: T.text, marginTop: 1, fontVariantNumeric: "tabular-nums", letterSpacing: -.8 }}>{fmtBRL(bigValue)}</div>
-        <div style={{ fontSize: 12.5, color: T.sub, marginTop: 2 }}>
-          {tab === "work"
-            ? <>{worked.length} {worked.length === 1 ? "plantão" : "plantões"} · {fmtH(workedH)}{workedH > 0 ? ` · ${fmtBRL(workedV / workedH)}/h` : ""}</>
-            : expected > 0 ? <>de {fmtBRL(expected)} previstos no mês · <b style={{ color: T.text }}>{pct}%</b> já recebido</> : "Sem movimento financeiro previsto neste mês."}
-        </div>
-
-        {expected > 0 && (
-          <div style={{ display: "flex", gap: 2, height: 10, borderRadius: 6, overflow: "hidden", marginTop: 14, background: T.chip }}>
-            {bar.filter(b => b.w > 0).map((b, i) => <div key={i} style={{ width: `${b.w * 100}%`, background: b.bg }} />)}
+      {tab === "pay" ? (<>
+        <Card T={T} style={{ marginTop: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ fontSize: 13, color: T.sub }}>Ainda vão te pagar</span>
+            {eyeBtn}
           </div>
-        )}
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 7, marginTop: 13 }}>
-          <Legend color={T.accent} label="Recebido no mês" value={gotV} />
-          <Legend stripeBg={stripe} label="A receber (ainda vence)" value={openV} />
-          {lateMV > 0 && <Legend strong={T.red} icon={<Ic path={P.alert} size={12} color={T.red} />} label="Vencido neste mês" value={lateMV} />}
-        </div>
-
-        {tab !== "work" && workedV > 0 && (
-          <div style={{ marginTop: 13, paddingTop: 12, borderTop: `1px solid ${T.line}`, fontSize: 12.5, color: T.sub, lineHeight: 1.5 }}>
-            Trabalho de {MONTHS_S[m]}.: <b style={{ color: T.text }}>{fmtBRL(workedV)}</b> em {worked.length} {worked.length === 1 ? "plantão" : "plantões"} · {fmtH(workedH)}
-            {workedV > 0 && <> · {Math.floor(workedPaidV / workedV * 100)}% já recebido</>}
+          <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 34, color: T.text, marginTop: -2, fontVariantNumeric: "tabular-nums", letterSpacing: -.8 }}>{fmtBRL(pendV)}</div>
+          <div style={{ fontSize: 13, color: T.sub, marginTop: 2 }}>
+            {pend.length === 0 ? "Tudo em dia — nenhum plantão em aberto." : `em ${pend.length} ${pend.length === 1 ? "plantão" : "plantões"}`}
           </div>
-        )}
-      </Card>
 
-      {overdueV > 0 && (
-        <button onClick={() => { setTab("pay"); if (oldOverdue.length) setCursor(new Date(pd(oldOverdue[0].paymentDate).getFullYear(), pd(oldOverdue[0].paymentDate).getMonth(), 1)); }}
-          style={{ width: "100%", textAlign: "left", marginTop: 10, background: T.redSoft, border: "none", borderRadius: 18, padding: "12px 14px", cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 11 }}>
-          <Ic path={P.alert} size={18} color={T.red} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 800, color: T.red, fontSize: 14.5, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(overdueV)} atrasado</div>
-            <div style={{ fontSize: 12, color: T.red, opacity: .85 }}>{overdueAll.length} {overdueAll.length === 1 ? "plantão vencido e não pago" : "plantões vencidos e não pagos"}</div>
-          </div>
-          <Ic path={P.chev} size={15} color={T.red} />
-        </button>
-      )}
-
-      {(pendingV > 0 || forecast.some(fc => fc.v > 0)) && (
-        <Card T={T} style={{ marginTop: 10 }}>
-          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-            <span style={{ fontSize: 12.5, color: T.sub }}>Pendente no total</span>
-            <b style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 16.5, color: T.text, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(pendingV)}</b>
-          </div>
-          <div style={{ display: "flex", gap: 8, marginTop: 11 }}>
-            {forecast.map(fc => (
-              <button key={fc.key} onClick={() => setCursor(new Date(fc.d.getFullYear(), fc.d.getMonth(), 1))} style={{
-                flex: 1, border: "none", background: T.chip, borderRadius: 14, padding: "9px 6px", cursor: "pointer", fontFamily: "inherit", textAlign: "center",
-              }}>
-                <div style={{ fontSize: 10.5, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: .4 }}>{MONTHS_S[fc.d.getMonth()]}</div>
-                <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 13.5, color: fc.v ? T.text : T.sub, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>{fc.v ? fmtBRLk(fc.v) : "—"}</div>
-              </button>
-            ))}
-          </div>
-        </Card>
-      )}
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 18 }}>
-        {tab === "pay" && oldOverdue.length > 0 && (
-          <div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 4px 6px" }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: T.red, display: "flex", alignItems: "center", gap: 7 }}>
-                <Ic path={P.alert} size={13} color={T.red} /> Atrasados de meses anteriores
-              </span>
-              <span style={{ fontSize: 12.5, color: T.red, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(sum(oldOverdue))}</span>
+          {lateV > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 13, background: T.redSoft, borderRadius: 14, padding: "10px 12px" }}>
+              <Ic path={P.alert} size={17} color={T.red} />
+              <div style={{ flex: 1, fontSize: 13.5, color: T.red }}>
+                <b>{fmtBRL(lateV)}</b> já passou da data
+              </div>
+              <span style={{ fontSize: 12, color: T.red, opacity: .8 }}>{late.length} {late.length === 1 ? "plantão" : "plantões"}</span>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {oldOverdue.slice().sort((a, b) => a.paymentDate.localeCompare(b.paymentDate)).map(s => (
-                <ShiftCard key={s.id} T={T} s={s} data={data} onOpen={() => openEdit(s)} onTogglePaid={() => togglePaid(s.id)} showDate showPayInfo />
+          )}
+
+          {buckets.some(b => b.v > 0) && (<>
+            <div style={{ fontSize: 12.5, color: T.sub, marginTop: 15, marginBottom: 8 }}>Quando cai</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {buckets.map(b => (
+                <div key={b.key} style={{ flex: 1, background: T.chip, borderRadius: 14, padding: "10px 6px", textAlign: "center" }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: .4 }}>{MONTHS_S[b.d.getMonth()]}</div>
+                  <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 14, color: b.v ? T.text : T.sub, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>{b.v ? fmtBRLk(b.v) : "—"}</div>
+                </div>
               ))}
             </div>
+          </>)}
+        </Card>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 18 }}>
+          {pend.length === 0 && (
+            <div style={{ textAlign: "center", color: T.sub, fontSize: 14, padding: "34px 0", lineHeight: 1.5 }}>
+              Nenhum plantão esperando pagamento.<br />Quando você lançar um plantão novo, ele aparece aqui.
+            </div>
+          )}
+          {payGroups.map(([k, arr]) => {
+            const isLate = k && k < today;
+            const header = !k ? "Sem data de pagamento" : isLate ? `Atrasado desde ${fmtDayMonY(k)}` : `Cai em ${fmtDayMonY(k)}`;
+            return (
+              <div key={k || "sem"}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 4px" }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: isLate ? T.red : !k ? T.amber : T.text, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{header}</span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                    <span style={{ fontSize: 12.5, color: T.sub, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(sum(arr))}</span>
+                    <button onClick={() => receiveGroup(arr, header)} style={{ border: "none", background: T.accentSoft, color: T.accent, fontWeight: 700, fontSize: 12, padding: "5px 10px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit" }}>Recebi</button>
+                  </span>
+                </div>
+                {!k && <div style={{ fontSize: 12, color: T.sub, padding: "0 4px 8px", lineHeight: 1.45 }}>Abra o plantão e diga quando você recebe, para ele entrar na previsão.</div>}
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {arr.map(s => <ShiftCard key={s.id} T={T} s={s} data={data} onOpen={() => openEdit(s)} onTogglePaid={() => togglePaid(s.id)} showDate showPayInfo />)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </>) : (<>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+            <button onClick={() => setCursor(new Date(y, m - 1, 1))} aria-label="Mês anterior" style={{ border: "none", background: "transparent", color: T.sub, cursor: "pointer", padding: "6px 4px" }}><Ic path={P.chevL} size={19} /></button>
+            <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 20, color: T.text, letterSpacing: -.3 }}>{MONTHS[m]} <span style={{ color: T.sub, fontWeight: 500 }}>{y}</span></div>
+            <button onClick={() => setCursor(new Date(y, m + 1, 1))} aria-label="Próximo mês" style={{ border: "none", background: "transparent", color: T.sub, cursor: "pointer", padding: "6px 4px" }}><Ic path={P.chevR} size={19} /></button>
           </div>
-        )}
+          {eyeBtn}
+        </div>
 
-        {items.length === 0 && <div style={{ textAlign: "center", color: T.sub, fontSize: 13.5, padding: "28px 0" }}>{emptyMsg}</div>}
+        <Card T={T} style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 13, color: T.sub }}>Caiu na sua conta em {MONTHS_S[m]}.</div>
+          <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 34, color: T.text, marginTop: -2, fontVariantNumeric: "tabular-nums", letterSpacing: -.8 }}>{fmtBRL(gotV)}</div>
+          <div style={{ fontSize: 13, color: T.sub, marginTop: 2 }}>
+            {got.length === 0 ? "Nenhum pagamento marcado neste mês." : `${got.length} ${got.length === 1 ? "plantão pago" : "plantões pagos"} · ${fmtBRL(gotYear)} no ano`}
+          </div>
+        </Card>
 
-        {groups.map(({ k, arr }) => {
-          const sub = sum(arr);
-          const loc = byLoc ? data.locations.find(l => l.id === k) : null;
-          const header = byLoc ? (loc ? loc.name : "Sem local associado")
-            : tab === "pay" ? `Recebe em ${fmtDateLong(k)}`
-            : tab === "got" ? `Recebido em ${fmtDateLong(k)}` : fmtDateLong(k);
-          const openArr = arr.filter(s => !s.paid);
-          return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 18 }}>
+          {got.length === 0 && (
+            <div style={{ textAlign: "center", color: T.sub, fontSize: 14, padding: "34px 0", lineHeight: 1.5 }}>
+              Quando um plantão for pago, toque no selo <b style={{ color: T.text }}>A RECEBER</b> dele<br />ou use o botão <b style={{ color: T.text }}>Recebi</b> na aba ao lado.
+            </div>
+          )}
+          {gotGroups.map(([k, arr]) => (
             <div key={k}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 4px 6px" }}>
-                <span style={{ fontSize: 13, fontWeight: 700, color: T.text, display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
-                  {byLoc && <span style={{ width: 9, height: 9, borderRadius: 99, background: loc ? loc.color : T.sub, flexShrink: 0 }} />}
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{header}</span>
-                </span>
-                <span style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-                  <span style={{ fontSize: 12.5, color: T.sub, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(sub)}</span>
-                  {tab === "pay" && openArr.length > 0 && (
-                    <button onClick={() => receiveGroup(openArr, header)} style={{ border: "none", background: T.accentSoft, color: T.accent, fontWeight: 700, fontSize: 12, padding: "5px 10px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit" }}>Recebi</button>
-                  )}
-                </span>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 4px" }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: T.text }}>Caiu em {fmtDayMonY(k)}</span>
+                <span style={{ fontSize: 12.5, color: T.sub, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(sum(arr))}</span>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {arr.map(s => <ShiftCard key={s.id} T={T} s={s} data={data} onOpen={() => openEdit(s)} onTogglePaid={() => togglePaid(s.id)} showDate={byLoc || tab !== "work"} showPayInfo />)}
+                {arr.map(s => <ShiftCard key={s.id} T={T} s={s} data={data} onOpen={() => openEdit(s)} onTogglePaid={() => togglePaid(s.id)} showDate showPayInfo />)}
               </div>
-            </div>
-          );
-        })}
-
-        {tab === "pay" && isCurrent && noDate.length > 0 && (
-          <div>
-            <button onClick={() => setOpenNoDate(v => !v)} style={{
-              width: "100%", display: "flex", alignItems: "center", gap: 10, textAlign: "left", cursor: "pointer", fontFamily: "inherit",
-              background: T.amberSoft, border: "none", borderRadius: 18, padding: "12px 14px", marginTop: 4,
-            }}>
-              <Ic path={P.alert} size={16} color={T.amber} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13.5, fontWeight: 700, color: T.amber }}>{noDate.length} sem data de recebimento</div>
-                <div style={{ fontSize: 12, color: T.amber, opacity: .85 }}>{fmtBRL(sum(noDate))} fora da previsão de caixa</div>
-              </div>
-              <span style={{ transform: openNoDate ? "rotate(90deg)" : "none", display: "grid", placeItems: "center" }}><Ic path={P.chev} size={15} color={T.amber} /></span>
-            </button>
-            {openNoDate && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
-                {noDate.slice().sort((a, b) => a.date.localeCompare(b.date)).map(s => (
-                  <ShiftCard key={s.id} T={T} s={s} data={data} onOpen={() => openEdit(s)} onTogglePaid={() => togglePaid(s.id)} showDate showPayInfo />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {filt && <FilterSheet T={T} data={data} setData={setData} onClose={() => setFilt(false)} />}
-
-      {info && (
-        <Sheet T={T} title="Como as contas são feitas" onClose={() => setInfo(false)}>
-          {[
-            ["Trabalhados", "Soma dos plantões pela data em que foram feitos. É o quanto você produziu no mês, tenha recebido ou não."],
-            ["Recebidos", "Plantões marcados como pagos, contados no mês em que o dinheiro entrou (o campo “Recebido em”). É o seu caixa de verdade."],
-            ["A receber", "Plantões ainda não pagos, contados no mês da data prevista de recebimento."],
-            ["Atrasado", "Não pago e com a data prevista já vencida. Aparece somado de todos os meses, não só do mês aberto."],
-            ["Previsto no mês", "Recebido + a receber do mês. É a base da barra e do percentual."],
-            ["Não realizados", "Plantões marcados como folga, troca ou falta ficam fora de todas as contas."],
-          ].map(([t, d]) => (
-            <div key={t} style={{ marginBottom: 14 }}>
-              <div style={{ fontWeight: 700, color: T.text, fontSize: 15 }}>{t}</div>
-              <div style={{ fontSize: 13.5, color: T.sub, marginTop: 3, lineHeight: 1.5 }}>{d}</div>
             </div>
           ))}
-          <Card T={T} style={{ fontSize: 13, color: T.sub, lineHeight: 1.5 }}>
-            Um plantão nunca é contado duas vezes na mesma conta: ou ele está em “recebidos”, ou em “a receber”.
-          </Card>
-        </Sheet>
-      )}
+        </div>
+      </>)}
+
+      {filt && <FilterSheet T={T} data={data} setData={setData} onClose={() => setFilt(false)} />}
     </div>
   );
 }
 
-/* ── filtros da tela de pagamentos ── */
+/* ── filtros ── */
 function FilterSheet({ T, data, setData, onClose }) {
   const st = data.settings;
-  const [g, setG] = useState(!!st.groupByLoc);
-  const [dsc, setDsc] = useState(!!st.sortDesc);
   const [hid, setHid] = useState(st.hiddenLocs || []);
   const list = [...data.locations.map(l => [l.id, l.name, l.color]), ["_none", "Plantões sem local", T.sub]];
   const toggle = id => setHid(h => (h.includes(id) ? h.filter(x => x !== id) : [...h, id]));
-  const apply = () => { setData(d => ({ ...d, settings: { ...d.settings, groupByLoc: g, sortDesc: dsc, hiddenLocs: hid } })); onClose(); };
+  const apply = () => { setData(d => ({ ...d, settings: { ...d.settings, hiddenLocs: hid } })); onClose(); };
   return (
-    <Sheet T={T} title="Filtros" onClose={onClose}
+    <Sheet T={T} title="Mostrar quais locais" onClose={onClose}
       footer={<button onClick={apply} style={{ border: "none", background: T.accent, color: T.onAccent, fontWeight: 700, fontSize: 14, padding: "9px 8px", borderRadius: 999, cursor: "pointer", width: 62, fontFamily: "inherit" }}>OK</button>}>
-      <div style={{ ...sectionLabel(T), marginTop: 4 }}>Ordem das datas</div>
-      <Segmented T={T} value={dsc ? "desc" : "asc"} onChange={k => setDsc(k === "desc")}
-        options={[["asc", "Mais antigos primeiro"], ["desc", "Mais recentes primeiro"]]} />
-
-      <div style={sectionLabel(T)}>Agrupamento</div>
-      <div style={groupBox(T)}>
-        <FieldRow T={T} label="Agrupar por local" last><Toggle T={T} on={g} onChange={setG} /></FieldRow>
+      <div style={{ fontSize: 13.5, color: T.sub, margin: "2px 6px 12px", lineHeight: 1.5 }}>
+        Desmarque um local para tirar os plantões dele das contas desta tela.
       </div>
-
-      <div style={sectionLabel(T)}>Mostrar estes locais</div>
       <div style={groupBox(T)}>
         {list.map(([id, name, color], i) => (
           <Row key={id} T={T} last={i === list.length - 1}
@@ -1257,33 +1148,34 @@ function FilterSheet({ T, data, setData, onClose }) {
             right={!hid.includes(id) && <Ic path={P.check} size={16} color={T.accent} />} />
         ))}
       </div>
-
-      <button onClick={() => { setG(false); setDsc(false); setHid([]); }} style={{ width: "100%", marginTop: 18, border: "none", background: "transparent", color: T.red, fontWeight: 600, fontSize: 14.5, padding: 12, cursor: "pointer", fontFamily: "inherit" }}>
-        Redefinir filtros
-      </button>
+      {hid.length > 0 && (
+        <button onClick={() => setHid([])} style={{ width: "100%", marginTop: 16, border: "none", background: "transparent", color: T.accent, fontWeight: 600, fontSize: 14.5, padding: 12, cursor: "pointer", fontFamily: "inherit" }}>
+          Mostrar todos de novo
+        </button>
+      )}
     </Sheet>
   );
 }
 
-/* ═══════════════ RESUMO ═══════════════ */
-function SummaryView({ T, data, goToMonth, setData }) {
+/* ═══════════════ RESUMO ═══════════════
+   O mês em foco no topo, o ano embaixo. Sem jargão: "você fez",
+   "já caiu", "falta cair".                                        */
+function SummaryView({ T, data, setData, openEdit, togglePaid }) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [selM, setSelM] = useState(now.getMonth());
-  const [metric, setMetric] = useState("money");   // money | hours
+  const [metric, setMetric] = useState("money");
+  const [listOpen, setListOpen] = useState(false);
   const yStr = String(year);
   const st = data.settings;
 
   const months = useMemo(() => {
-    const arr = Array.from({ length: 12 }, () => ({ total: 0, paid: 0, hours: 0, count: 0, got: 0 }));
+    const arr = Array.from({ length: 12 }, () => ({ total: 0, paid: 0, hours: 0, count: 0, shifts: [] }));
     for (const s of data.shifts) {
-      if (!isOn(s)) continue;
-      if (s.date.slice(0, 4) === yStr) {
-        const b = arr[pd(s.date).getMonth()];
-        b.total += s.value || 0; b.count++; b.hours += shiftHours(s);
-        if (s.paid) b.paid += s.value || 0;
-      }
-      if (s.paid && paidAtOf(s).slice(0, 4) === yStr) arr[pd(paidAtOf(s)).getMonth()].got += s.value || 0;
+      if (!isOn(s) || s.date.slice(0, 4) !== yStr) continue;
+      const b = arr[pd(s.date).getMonth()];
+      b.total += s.value || 0; b.count++; b.hours += shiftHours(s); b.shifts.push(s);
+      if (s.paid) b.paid += s.value || 0;
     }
     return arr;
   }, [data.shifts, yStr]);
@@ -1291,10 +1183,10 @@ function SummaryView({ T, data, goToMonth, setData }) {
   const yTotal = months.reduce((a, b) => a + b.total, 0);
   const yHours = months.reduce((a, b) => a + b.hours, 0);
   const yCount = months.reduce((a, b) => a + b.count, 0);
-  const yGot = months.reduce((a, b) => a + b.got, 0);
-  const yPending = useMemo(() => data.shifts.filter(s => isOn(s) && !s.paid && s.date.slice(0, 4) === yStr).reduce((a, s) => a + (s.value || 0), 0), [data.shifts, yStr]);
   const maxV = Math.max(...months.map(b => (metric === "money" ? b.total : b.hours)), 1);
-  const mSel = months[selM];
+  const b = months[selM];
+  const pending = b.total - b.paid;
+  const pctPaid = b.total > 0 ? Math.round(b.paid / b.total * 100) : 0;
   const goal = st.monthlyGoal || 0;
 
   const locStats = useMemo(() => {
@@ -1302,20 +1194,12 @@ function SummaryView({ T, data, goToMonth, setData }) {
     for (const s of data.shifts) {
       if (!isOn(s) || s.date.slice(0, 4) !== yStr) continue;
       const k = s.locationId || "_none";
-      g[k] = g[k] || { total: 0, hours: 0, count: 0, paid: 0 };
+      g[k] = g[k] || { total: 0, hours: 0, count: 0 };
       g[k].total += s.value || 0; g[k].hours += shiftHours(s); g[k].count++;
-      if (s.paid) g[k].paid += s.value || 0;
     }
-    return Object.entries(g).sort((a, b) => b[1].total - a[1].total);
+    return Object.entries(g).sort((x, z) => z[1].total - x[1].total);
   }, [data.shifts, yStr]);
   const locMax = Math.max(...locStats.map(([, v]) => (metric === "money" ? v.total : v.hours)), 1);
-
-  const Stat = ({ label, value, tone }) => (
-    <div style={{ background: T.card, borderRadius: 18, padding: "12px 14px", boxShadow: T.shadow }}>
-      <div style={{ fontSize: 11.5, color: T.sub, fontWeight: 600 }}>{label}</div>
-      <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 18, color: tone || T.text, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>{value}</div>
-    </div>
-  );
 
   return (
     <div style={{ padding: "10px 16px 0" }}>
@@ -1332,80 +1216,86 @@ function SummaryView({ T, data, goToMonth, setData }) {
         </button>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9, marginTop: 12 }}>
-        <Stat label="Trabalhado no ano" value={fmtBRL(yTotal)} />
-        <Stat label="Recebido no ano" value={fmtBRL(yGot)} tone={T.accent} />
-        <Stat label="A receber" value={fmtBRL(yPending)} tone={yPending ? T.amber : T.text} />
-        <Stat label="Média por hora" value={yHours ? fmtBRL(yTotal / yHours) : "—"} />
-        <Stat label="Plantões" value={yCount} />
-        <Stat label="Horas trabalhadas" value={fmtH(yHours)} />
-      </div>
-
+      {/* ── o mês em foco ── */}
       <Card T={T} style={{ marginTop: 12 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14 }}>
-          <span style={{ fontSize: 13, color: T.sub, fontWeight: 600 }}>{metric === "money" ? "Ganhos por mês" : "Horas por mês"}</span>
-          <Segmented T={T} value={metric} onChange={setMetric} options={[["money", "R$"], ["hours", "h"]]} style={{ width: 110 }} />
+        <div style={{ fontSize: 13, color: T.sub }}>Você fez em {MONTHS[selM].toLowerCase()}</div>
+        <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 34, color: T.text, marginTop: -2, fontVariantNumeric: "tabular-nums", letterSpacing: -.8 }}>{fmtBRL(b.total)}</div>
+        <div style={{ fontSize: 13, color: T.sub, marginTop: 2 }}>
+          {b.count === 0 ? "Nenhum plantão neste mês." : <>{b.count} {b.count === 1 ? "plantão" : "plantões"} · {fmtH(b.hours)}{b.hours ? ` · ${fmtBRL(b.total / b.hours)} por hora` : ""}</>}
         </div>
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 104 }}>
-          {months.map((b, i) => {
-            const v = metric === "money" ? b.total : b.hours;
-            const paidPct = metric === "money" && b.total ? (b.paid / b.total) * 100 : 0;
+
+        {b.total > 0 && (<>
+          <div style={{ height: 10, borderRadius: 6, background: T.chip, overflow: "hidden", marginTop: 14 }}>
+            <div style={{ width: `${pctPaid}%`, height: "100%", background: T.accent, transition: "width .3s" }} />
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginTop: 9, fontSize: 13.5 }}>
+            <span style={{ color: T.sub, display: "flex", alignItems: "center", gap: 7 }}>
+              <span style={{ width: 9, height: 9, borderRadius: 3, background: T.accent }} />já caiu
+            </span>
+            <b style={{ color: T.text, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(b.paid)}</b>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginTop: 5, fontSize: 13.5 }}>
+            <span style={{ color: T.sub, display: "flex", alignItems: "center", gap: 7 }}>
+              <span style={{ width: 9, height: 9, borderRadius: 3, background: T.chip, boxShadow: `inset 0 0 0 1px ${T.line}` }} />ainda vai cair
+            </span>
+            <b style={{ color: pending ? T.amber : T.text, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(pending)}</b>
+          </div>
+        </>)}
+
+        {goal > 0 && b.total > 0 && (
+          <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${T.line}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: T.sub, marginBottom: 6 }}>
+              <span>Sua meta do mês</span>
+              <span style={{ fontVariantNumeric: "tabular-nums", color: b.total >= goal ? T.accent : T.sub, fontWeight: b.total >= goal ? 700 : 400 }}>
+                {Math.round(b.total / goal * 100)}% de {fmtBRL(goal)}
+              </span>
+            </div>
+            <div style={{ height: 8, borderRadius: 99, background: T.chip, overflow: "hidden" }}>
+              <div style={{ width: `${Math.min(100, b.total / goal * 100)}%`, height: "100%", borderRadius: 99, background: b.total >= goal ? T.accent : T.amber, transition: "width .3s" }} />
+            </div>
+          </div>
+        )}
+
+        {b.count > 0 && (
+          <button onClick={() => setListOpen(true)} style={{ marginTop: 14, width: "100%", border: "none", background: T.chip, color: T.text, fontWeight: 600, fontSize: 13.5, padding: "11px 14px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit" }}>
+            Ver {b.count === 1 ? "o plantão" : `os ${b.count} plantões`} de {MONTHS_S[selM]}.
+          </button>
+        )}
+      </Card>
+
+      {/* ── o ano ── */}
+      <Card T={T} style={{ marginTop: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 12 }}>
+          <span style={{ fontSize: 13, color: T.sub, fontWeight: 600 }}>Mês a mês · toque para trocar</span>
+          <Segmented T={T} value={metric} onChange={setMetric} options={[["money", "R$"], ["hours", "h"]]} style={{ width: 96 }} />
+        </div>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 100 }}>
+          {months.map((mm, i) => {
+            const v = metric === "money" ? mm.total : mm.hours;
             return (
               <button key={i} onClick={() => setSelM(i)} aria-label={MONTHS[i]} style={{ flex: 1, border: "none", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 5, padding: 0, height: "100%", justifyContent: "flex-end", fontFamily: "inherit" }}>
                 <div style={{
-                  width: "100%", borderRadius: 5, minHeight: v ? 5 : 3, height: `${(v / maxV) * 82}%`, overflow: "hidden",
-                  background: v ? T.accentSoft : T.chip,
-                  boxShadow: i === selM ? `inset 0 0 0 2px ${T.accent}` : "none",
-                  display: "flex", flexDirection: "column", justifyContent: "flex-end", transition: "height .25s ease",
-                }}>
-                  {metric === "money" && <div style={{ width: "100%", height: `${paidPct}%`, background: T.accent }} />}
-                  {metric === "hours" && v > 0 && <div style={{ width: "100%", height: "100%", background: T.accent, opacity: .55 }} />}
-                </div>
+                  width: "100%", borderRadius: 5, minHeight: v ? 5 : 3, height: `${(v / maxV) * 80}%`,
+                  background: i === selM ? T.accent : v ? T.accentSoft : T.chip, transition: "height .25s ease, background .2s",
+                }} />
                 <span style={{ fontSize: 9.5, fontWeight: 700, color: i === selM ? T.accent : T.sub }}>{MONTHS_S[i][0].toUpperCase()}</span>
               </button>
             );
           })}
         </div>
-        {metric === "money" && (
-          <div style={{ display: "flex", gap: 12, marginTop: 10, fontSize: 11.5, color: T.sub }}>
-            <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 9, height: 9, borderRadius: 3, background: T.accent }} />pago</span>
-            <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 9, height: 9, borderRadius: 3, background: T.accentSoft }} />a receber</span>
-          </div>
-        )}
-
-        <div style={{ marginTop: 14, paddingTop: 13, borderTop: `1px solid ${T.line}` }}>
-          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-            <span style={{ fontWeight: 700, color: T.text, fontSize: 15 }}>{MONTHS[selM]}</span>
-            <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 18, color: T.text, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(mSel.total)}</span>
-          </div>
-          <div style={{ fontSize: 12.5, color: T.sub, marginTop: 4 }}>
-            {mSel.count} {mSel.count === 1 ? "plantão" : "plantões"} · {fmtH(mSel.hours)}{mSel.hours ? ` · ${fmtBRL(mSel.total / mSel.hours)}/h` : ""}
-          </div>
-          <div style={{ fontSize: 12.5, color: T.sub, marginTop: 3 }}>
-            Caixa do mês: <b style={{ color: T.accent }}>{fmtBRL(mSel.got)}</b> recebidos
-            {mSel.total - mSel.paid > 0 && <> · <b style={{ color: T.amber }}>{fmtBRL(mSel.total - mSel.paid)}</b> a receber destes plantões</>}
-          </div>
-          {goal > 0 && (
-            <div style={{ marginTop: 11 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: T.sub, marginBottom: 5 }}>
-                <span>Meta mensal</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{Math.min(100, Math.round(mSel.total / goal * 100))}% de {fmtBRL(goal)}</span>
-              </div>
-              <div style={{ height: 8, borderRadius: 99, background: T.chip, overflow: "hidden" }}>
-                <div style={{ width: `${Math.min(100, mSel.total / goal * 100)}%`, height: "100%", borderRadius: 99, background: mSel.total >= goal ? T.accent : T.amber, transition: "width .3s" }} />
-              </div>
-            </div>
-          )}
-          <button onClick={() => goToMonth(new Date(year, selM, 1))} style={{ marginTop: 13, border: "none", background: T.chip, color: T.text, fontWeight: 600, fontSize: 13.5, padding: "9px 14px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit" }}>
-            Ver pagamentos de {MONTHS_S[selM]}.
-          </button>
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${T.line}`, display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+          <span style={{ fontSize: 13, color: T.sub }}>Total de {year}</span>
+          <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 18, color: T.text, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(yTotal)}</span>
+        </div>
+        <div style={{ fontSize: 12.5, color: T.sub, marginTop: 3 }}>
+          {yCount} {yCount === 1 ? "plantão" : "plantões"} · {fmtH(yHours)}{yHours ? ` · ${fmtBRL(yTotal / yHours)} por hora` : ""}
         </div>
       </Card>
 
+      {/* ── por local ── */}
       {locStats.length > 0 && (
         <Card T={T} style={{ marginTop: 12, marginBottom: 8 }}>
-          <div style={{ fontSize: 13, color: T.sub, fontWeight: 600, marginBottom: 10 }}>
-            {metric === "money" ? "Receita por local" : "Horas por local"} · {year}
-          </div>
+          <div style={{ fontSize: 13, color: T.sub, fontWeight: 600, marginBottom: 10 }}>Onde você mais {metric === "money" ? "ganha" : "trabalha"} · {year}</div>
           {locStats.map(([k, v], i) => {
             const loc = data.locations.find(l => l.id === k);
             const val = metric === "money" ? v.total : v.hours;
@@ -1422,12 +1312,26 @@ function SummaryView({ T, data, goToMonth, setData }) {
                 </div>
                 <div style={{ fontSize: 11.5, color: T.sub, marginLeft: 18 }}>
                   {v.count} {v.count === 1 ? "plantão" : "plantões"} · {fmtH(v.hours)}{v.hours ? ` · ${fmtBRL(v.total / v.hours)}/h` : ""}
-                  {v.total - v.paid > 0 && <> · <span style={{ color: T.amber }}>{fmtBRL(v.total - v.paid)} a receber</span></>}
                 </div>
               </div>
             );
           })}
         </Card>
+      )}
+
+      {listOpen && (
+        <Sheet T={T} title={`${MONTHS[selM]} de ${year}`} onClose={() => setListOpen(false)}>
+          <Card T={T} style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 12.5, color: T.sub }}>Total do mês</div>
+            <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 24, color: T.text, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(b.total)}</div>
+            <div style={{ fontSize: 12.5, color: T.sub, marginTop: 2 }}>{b.count} {b.count === 1 ? "plantão" : "plantões"} · {fmtH(b.hours)}</div>
+          </Card>
+          <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+            {b.shifts.slice().sort((x, z) => x.date.localeCompare(z.date)).map(s => (
+              <ShiftCard key={s.id} T={T} s={s} data={data} onOpen={() => { setListOpen(false); openEdit(s); }} onTogglePaid={() => togglePaid(s.id)} showDate showPayInfo />
+            ))}
+          </div>
+        </Sheet>
       )}
     </div>
   );
@@ -1811,8 +1715,6 @@ function App() {
     options: [{ label: "Apagar local", danger: true, fn: () => setData(d => ({ ...d, locations: d.locations.filter(l => l.id !== id), shifts: d.shifts.map(s => s.locationId === id ? { ...s, locationId: null } : s) })) }],
   });
 
-  const goToMonth = d => { setCursor(new Date(d.getFullYear(), d.getMonth(), 1)); setTab("pay"); };
-
   const NAV = [
     ["cal", "Calendário", P.cal],
     ["pay", "Pagamentos", P.money],
@@ -1837,7 +1739,7 @@ function App() {
       <div style={{ maxWidth: 430, margin: "0 auto", paddingBottom: "calc(122px + env(safe-area-inset-bottom))" }}>
         {tab === "cal" && <CalendarView T={T} data={data} cursor={cursor} setCursor={setCursor} sel={sel} setSel={setSel} openCreate={openCreate} openEdit={openEdit} togglePaid={togglePaid} />}
         {tab === "pay" && <PaymentsView T={T} data={data} cursor={cursor} setCursor={setCursor} openEdit={openEdit} togglePaid={togglePaid} markPaid={markPaid} setDialog={setDialog} setData={setData} />}
-        {tab === "sum" && <SummaryView T={T} data={data} goToMonth={goToMonth} setData={setData} />}
+        {tab === "sum" && <SummaryView T={T} data={data} setData={setData} openEdit={openEdit} togglePaid={togglePaid} />}
         {tab === "loc" && <LocationsView T={T} data={data} saveLoc={saveLoc} deleteLoc={deleteLoc} />}
         {tab === "set" && <SettingsView T={T} data={data} setData={setData} setDialog={setDialog} />}
       </div>
