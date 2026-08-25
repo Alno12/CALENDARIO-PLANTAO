@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <title>Escala · Gestor de plantões</title>
+  <meta name="description" content="Organize seus plantões, controle pagamentos e acompanhe seus ganhos. Funciona offline." />
+
+  <!-- PWA -->
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <meta name="theme-color" content="#0E7A5F" />
+
+  <!-- iOS: adicionar à tela de início -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Escala" />
+  <link rel="apple-touch-icon" href="./icons/icon-180.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
+
+  <style>
+    @font-face { font-family: 'Bricolage Grotesque'; src: url('./fonts/bricolage.woff2') format('woff2'); font-weight: 200 800; font-style: normal; font-display: swap; }
+    @font-face { font-family: 'Instrument Sans'; src: url('./fonts/instrument.woff2') format('woff2'); font-weight: 400 700; font-style: normal; font-display: swap; }
+    html, body { margin: 0; padding: 0; background: #EEF2F0; overscroll-behavior-y: none; }
+    #root { min-height: 100dvh; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="./app.js"></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", function () {
+        navigator.serviceWorker.register("./sw.js").catch(function () {});
+      });
+    }
+  </script>
+</body>
+</html>
