@@ -21,10 +21,12 @@ const mKey = s => String(s || "").slice(0, 7);
 const daysBetween = (a, b) => Math.round((pd(b) - pd(a)) / 86400000);
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
-/* dinheiro */
-const fmtBRL = v => (v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+/* dinheiro — MASK liga o modo "ocultar valores" (definido pelo App a cada render) */
+let MASK = false;
+const setMask = v => { MASK = !!v; };
+const fmtBRL = v => (MASK ? "R$ ••••" : (v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
 const fmtNum = v => (v || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fmtBRLk = v => { const n = Math.abs(v || 0); return n >= 1000 ? `R$ ${(v / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}k` : fmtBRL(v); };
+const fmtBRLk = v => { if (MASK) return "R$ ••"; const n = Math.abs(v || 0); return n >= 1000 ? `R$ ${(v / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}k` : fmtBRL(v); };
 
 /* datas por extenso */
 const fmtDateLong = s => { const d = pd(s); return `${d.getDate()} de ${MONTHS_S[d.getMonth()]}. de ${d.getFullYear()}`; };
@@ -47,6 +49,11 @@ const spanDays = s => { const n = Math.min(Math.max(0, daysBetween(s.date, endDa
 const fmtDur = mins => { const h = Math.floor(mins / 60), mi = Math.round(mins % 60); return mi ? `${h}h${pad(mi)}` : `${h}h`; };
 const fmtH = h => fmtDur(Math.round((h || 0) * 60));
 const DUR_PRESETS = [6, 12, 24, 36, 48];
+
+/* plantão não realizado (folga, troca, falta) — fica no calendário, sai das contas */
+const REASONS = [["folga", "Folga"], ["troca", "Troca"], ["falta", "Falta"], ["outro", "Outro"]];
+const reasonLabel = r => (REASONS.find(x => x[0] === r) || [null, "Não realizado"])[1];
+const isOn = s => !s.notDone;
 
 /* pagamento */
 const paidAtOf = s => s.paidAt || s.paymentDate || s.date;
@@ -114,6 +121,14 @@ function genDates(startStr, rep) {
   return out.slice(0, maxN);
 }
 
+/* escalas usadas na prática: horas de plantão × horas de descanso */
+const SCALES = [
+  { k: "12×36", h: 12, every: 2, desc: "12 h de plantão, 36 h de folga" },
+  { k: "24×48", h: 24, every: 3, desc: "24 h de plantão, 48 h de folga" },
+  { k: "12×60", h: 12, every: 3, desc: "12 h de plantão, 60 h de folga" },
+  { k: "24×72", h: 24, every: 4, desc: "24 h de plantão, 72 h de folga" },
+];
+
 const repEndLabel = rep => {
   const mode = repEnd(rep);
   if (mode === "never") return "sem data final";
@@ -125,6 +140,7 @@ const repLabel = rep => {
   if (!rep || rep.type === "none") return "Nunca";
   const dias = (rep.weekdays || []).map(w => WD[w]).join(", ");
   const base =
+    rep.scale ? `Escala ${rep.scale}` :
     rep.type === "daily" ? "Todos os dias" :
     rep.type === "weekly" ? `Toda semana · ${dias}` :
     rep.type === "biweekly" ? `A cada 2 semanas · ${dias}` :
@@ -137,16 +153,16 @@ const repLabel = rep => {
 /* ── temas ── */
 const THEMES = {
   light: {
-    bg: "#EEF2F0", card: "#FFFFFF", card2: "#F5F8F6", text: "#13201A", sub: "#63736B",
-    line: "#E2E8E4", accent: "#0E7A5F", onAccent: "#FFFFFF", accentSoft: "#DDEEE7",
-    amber: "#A66508", amberSoft: "#F6ECDA", red: "#C0392B", redSoft: "#F7E4E0",
-    nav: "rgba(255,255,255,.9)", shadow: "0 10px 30px rgba(19,32,26,.10)", chip: "#EDF1EF",
+    bg: "#F4F6F5", card: "#FFFFFF", card2: "#F1F4F2", text: "#0F1A15", sub: "#6C7A73",
+    line: "#ECF0EE", line2: "#F3F6F4", accent: "#0E7A5F", onAccent: "#FFFFFF", accentSoft: "#E3F0EA",
+    amber: "#96620A", amberSoft: "#FBF1E0", red: "#C33B2C", redSoft: "#FBE7E3",
+    nav: "rgba(255,255,255,.84)", shadow: "0 8px 28px rgba(15,26,21,.07)", chip: "#F0F3F1",
   },
   dark: {
-    bg: "#0B100E", card: "#161D19", card2: "#1C2621", text: "#E9F0EC", sub: "#8FA098",
-    line: "#26332C", accent: "#3ECDA0", onAccent: "#07281E", accentSoft: "#153228",
-    amber: "#E3A63C", amberSoft: "#33280F", red: "#E9705C", redSoft: "#3A1B15",
-    nav: "rgba(18,24,21,.88)", shadow: "0 10px 30px rgba(0,0,0,.45)", chip: "#212B26",
+    bg: "#0A0F0D", card: "#151B18", card2: "#1C2420", text: "#EAF1ED", sub: "#93A39B",
+    line: "#222C27", line2: "#1B2320", accent: "#3ECDA0", onAccent: "#06251C", accentSoft: "#123028",
+    amber: "#E8AE4B", amberSoft: "#332810", red: "#EC7663", redSoft: "#391A15",
+    nav: "rgba(14,19,17,.84)", shadow: "0 8px 28px rgba(0,0,0,.5)", chip: "#1E2723",
   },
 };
 
@@ -176,11 +192,16 @@ const P = {
   filter: "M4 6h16|M7 12h10|M10 18h4",
   down: "M12 4v12|M6 10.5 12 16.5l6-6|M5 20h14",
   alert: "M12 3 2.5 20h19z|M12 9.5v4.5|M12 17.2v.3",
+  eye: "M2 12s3.7-6.5 10-6.5S22 12 22 12s-3.7 6.5-10 6.5S2 12 2 12z|M12 14.6a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 0 0 0 5.2z",
+  eyeOff: "M3 3l18 18|M10.2 10.2a2.6 2.6 0 0 0 3.6 3.6|M9.8 5.7A9.7 9.7 0 0 1 12 5.5c6.3 0 10 6.5 10 6.5a17 17 0 0 1-3.3 4.1|M6.5 6.7A16.6 16.6 0 0 0 2 12s3.7 6.5 10 6.5c1 0 1.9-.1 2.7-.4",
+  off: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z|M5.6 5.6l12.8 12.8",
+  sort: "M7 4v16|M4 17l3 3 3-3|M17 20V4|M14 7l3-3 3 3",
+  scale: "M4 6h16|M4 12h10|M4 18h6",
 };
 
 /* ── primitivos de UI ── */
 const Card = ({ T, children, style, onClick }) => (
-  <div onClick={onClick} style={{ background: T.card, borderRadius: 20, border: `1px solid ${T.line}`, padding: 16, ...style }}>{children}</div>
+  <div onClick={onClick} style={{ background: T.card, borderRadius: 22, padding: 16, boxShadow: T.shadow, ...style }}>{children}</div>
 );
 
 const Toggle = ({ T, on, onChange }) => (
@@ -192,46 +213,47 @@ const Toggle = ({ T, on, onChange }) => (
   </button>
 );
 
-const Badge = ({ T, paid, overdue }) => (
-  <span style={{
-    fontSize: 11, fontWeight: 700, letterSpacing: .4, padding: "4px 9px", borderRadius: 8, whiteSpace: "nowrap",
-    background: paid ? T.accentSoft : overdue ? T.redSoft : T.amberSoft,
-    color: paid ? T.accent : overdue ? T.red : T.amber,
-  }}>{paid ? "PAGO" : overdue ? "ATRASADO" : "A RECEBER"}</span>
-);
+const Badge = ({ T, paid, overdue, off }) => {
+  const [bg, fg, txt] = off ? [T.chip, T.sub, "NÃO FEITO"]
+    : paid ? [T.accentSoft, T.accent, "PAGO"]
+    : overdue ? [T.redSoft, T.red, "ATRASADO"] : [T.amberSoft, T.amber, "A RECEBER"];
+  return (
+    <span style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: .4, padding: "4px 8px", borderRadius: 7, whiteSpace: "nowrap", background: bg, color: fg }}>{txt}</span>
+  );
+};
 
 const Sheet = ({ T, title, onClose, children, footer }) => (
-  <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(5,10,8,.5)", zIndex: 60, display: "flex", alignItems: "flex-end", justifyContent: "center", animation: "fadeIn .18s ease" }}>
+  <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(5,10,8,.45)", backdropFilter: "blur(2px)", zIndex: 60, display: "flex", alignItems: "flex-end", justifyContent: "center", animation: "fadeIn .18s ease" }}>
     <div onClick={e => e.stopPropagation()} style={{
-      width: "100%", maxWidth: 430, maxHeight: "92dvh", background: T.bg, borderRadius: "26px 26px 0 0",
-      display: "flex", flexDirection: "column", animation: "slideUp .24s cubic-bezier(.2,.9,.3,1)",
+      width: "100%", maxWidth: 430, maxHeight: "93dvh", background: T.bg, borderRadius: "28px 28px 0 0",
+      display: "flex", flexDirection: "column", animation: "slideUp .26s cubic-bezier(.2,.9,.3,1)",
     }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "16px 16px 8px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "14px 16px 10px" }}>
         <div style={{ width: 62, display: "flex" }}>
-          <button onClick={onClose} aria-label="Fechar" style={{ width: 36, height: 36, borderRadius: 999, border: "none", background: T.chip, color: T.text, cursor: "pointer", display: "grid", placeItems: "center", flexShrink: 0 }}><Ic path={P.x} size={17} /></button>
+          <button onClick={onClose} aria-label="Fechar" style={{ width: 34, height: 34, borderRadius: 999, border: "none", background: T.chip, color: T.text, cursor: "pointer", display: "grid", placeItems: "center", flexShrink: 0 }}><Ic path={P.x} size={16} /></button>
         </div>
-        <div style={{ flex: 1, minWidth: 0, textAlign: "center", fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 17, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</div>
+        <div style={{ flex: 1, minWidth: 0, textAlign: "center", fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 16.5, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</div>
         <div style={{ width: 62, display: "flex", justifyContent: "flex-end" }}>{footer}</div>
       </div>
-      <div style={{ overflowY: "auto", padding: "8px 16px 30px", WebkitOverflowScrolling: "touch" }}>{children}</div>
+      <div style={{ overflowY: "auto", padding: "6px 16px 34px", WebkitOverflowScrolling: "touch" }}>{children}</div>
     </div>
   </div>
 );
 
 const Dialog = ({ T, title, msg, options, onClose }) => (
-  <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(5,10,8,.55)", zIndex: 80, display: "grid", placeItems: "center", padding: 24, animation: "fadeIn .15s ease" }}>
-    <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 320, background: T.card, borderRadius: 22, padding: 20, boxShadow: T.shadow }}>
+  <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(5,10,8,.5)", zIndex: 80, display: "grid", placeItems: "center", padding: 24, animation: "fadeIn .15s ease" }}>
+    <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 320, background: T.card, borderRadius: 24, padding: 20, boxShadow: T.shadow }}>
       <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 17, color: T.text, textAlign: "center" }}>{title}</div>
       {msg && <div style={{ fontSize: 13.5, color: T.sub, textAlign: "center", marginTop: 8, lineHeight: 1.45 }}>{msg}</div>}
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16 }}>
         {options.map((o, i) => (
           <button key={i} onClick={() => { o.fn && o.fn(); onClose(); }} style={{
-            padding: "12px 14px", borderRadius: 14, border: "none", cursor: "pointer", fontSize: 15, fontWeight: 600, fontFamily: "inherit",
+            padding: "13px 14px", borderRadius: 15, border: "none", cursor: "pointer", fontSize: 15, fontWeight: 600, fontFamily: "inherit",
             background: o.danger ? T.redSoft : o.primary ? T.accent : T.chip,
             color: o.danger ? T.red : o.primary ? T.onAccent : T.text,
           }}>{o.label}</button>
         ))}
-        <button onClick={onClose} style={{ padding: "12px 14px", borderRadius: 14, border: "none", cursor: "pointer", fontSize: 15, fontWeight: 500, background: "transparent", color: T.sub, fontFamily: "inherit" }}>Cancelar</button>
+        <button onClick={onClose} style={{ padding: "12px 14px", borderRadius: 15, border: "none", cursor: "pointer", fontSize: 15, fontWeight: 500, background: "transparent", color: T.sub, fontFamily: "inherit" }}>Cancelar</button>
       </div>
     </div>
   </div>
@@ -244,15 +266,23 @@ const Row = ({ T, label, right, onClick, first, last }) => (
     cursor: onClick ? "pointer" : "default", textAlign: "left", fontFamily: "inherit",
   }}>
     <span style={{ fontSize: 15.5, color: T.text, fontWeight: 500 }}>{label}</span>
-    <span style={{ display: "flex", alignItems: "center", gap: 8, color: T.sub, fontSize: 15 }}>{right}{onClick && <Ic path={P.chev} size={16} color={T.sub} />}</span>
+    <span style={{ display: "flex", alignItems: "center", gap: 8, color: T.sub, fontSize: 15, minWidth: 0 }}>{right}{onClick && <Ic path={P.chev} size={15} color={T.sub} />}</span>
   </button>
 );
 
+/* campos: sem contorno, fundo suave — menos ruído na tela */
 const inputStyle = T => ({
-  width: "100%", padding: "13px 14px", borderRadius: 14, border: `1px solid ${T.line}`, background: T.card,
+  width: "100%", padding: "13px 14px", borderRadius: 15, border: "none", background: T.chip,
   color: T.text, fontSize: 15.5, fontFamily: "inherit", outline: "none",
 });
-
+const pillStyle = T => ({
+  border: "none", background: T.chip, color: T.text, borderRadius: 12, padding: "9px 10px",
+  fontSize: 14.5, fontFamily: "inherit", fontVariantNumeric: "tabular-nums", outline: "none", textAlign: "center",
+});
+const dateStyle = T => ({ ...pillStyle(T), width: 150 });
+const timeStyle = T => ({ ...pillStyle(T), width: 88 });
+const sectionLabel = T => ({ fontSize: 13, fontWeight: 600, color: T.sub, margin: "20px 6px 8px" });
+const groupBox = T => ({ borderRadius: 20, overflow: "hidden", background: T.card, boxShadow: T.shadow });
 
 /* ── campo de dinheiro (máscara de centavos: digita da direita para a esquerda) ── */
 const centsOf = v => Math.round((Number(v) || 0) * 100);
@@ -264,22 +294,19 @@ const MoneyInput = ({ T, value, onChange, width = 150, big, placeholder = "0,00"
     onChange(digits ? Number(digits) / 100 : 0);
   };
   return (
-    <div style={{
-      display: "flex", alignItems: "center", gap: 6, width, borderRadius: 14,
-      border: `1px solid ${T.line}`, background: T.card, padding: big ? "8px 10px" : "6px 10px",
-    }}>
-      <span style={{ color: T.sub, fontWeight: 700, fontSize: big ? 15 : 14 }}>R$</span>
+    <div style={{ display: "flex", alignItems: "center", gap: 6, width, borderRadius: 14, background: T.chip, padding: big ? "7px 10px" : "5px 10px" }}>
+      <span style={{ color: T.sub, fontWeight: 700, fontSize: big ? 14.5 : 13.5 }}>R$</span>
       <input
         value={txt} onChange={onType} onFocus={e => e.target.select()}
         inputMode="numeric" enterKeyHint="done" placeholder={placeholder} autoFocus={autoFocus}
         style={{
           flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", color: T.text,
           textAlign: "right", fontFamily: "'Bricolage Grotesque', inherit", fontWeight: 700,
-          fontSize: big ? 22 : 17, padding: "4px 0", fontVariantNumeric: "tabular-nums",
+          fontSize: big ? 21 : 16.5, padding: "4px 0", fontVariantNumeric: "tabular-nums",
         }} />
       {c > 0 && (
         <button onClick={() => onChange(0)} aria-label="Limpar valor" style={{ border: "none", background: "transparent", color: T.sub, cursor: "pointer", padding: 2, display: "grid", placeItems: "center" }}>
-          <Ic path={P.x} size={14} />
+          <Ic path={P.x} size={13} />
         </button>
       )}
     </div>
@@ -288,21 +315,21 @@ const MoneyInput = ({ T, value, onChange, width = 150, big, placeholder = "0,00"
 
 const Chip = ({ T, on, onClick, children, small, danger }) => (
   <button onClick={onClick} style={{
-    padding: small ? "7px 11px" : "9px 12px", borderRadius: 999, border: "none", cursor: "pointer", fontFamily: "inherit",
-    fontWeight: 700, fontSize: small ? 12.5 : 13.5, whiteSpace: "nowrap",
-    background: on ? (danger ? T.redSoft : T.accent) : T.card,
-    color: on ? (danger ? T.red : T.onAccent) : T.text,
-    boxShadow: on ? "none" : `inset 0 0 0 1px ${T.line}`,
+    padding: small ? "7px 11px" : "9px 13px", borderRadius: 999, border: "none", cursor: "pointer", fontFamily: "inherit",
+    fontWeight: 700, fontSize: small ? 12.5 : 13.5, whiteSpace: "nowrap", flexShrink: 0,
+    background: on ? (danger ? T.redSoft : T.accent) : T.chip,
+    color: on ? (danger ? T.red : T.onAccent) : T.sub,
   }}>{children}</button>
 );
 
 const Segmented = ({ T, value, onChange, options, style }) => (
-  <div style={{ display: "flex", background: T.card, borderRadius: 999, padding: 3, boxShadow: `inset 0 0 0 1px ${T.line}`, ...style }}>
+  <div style={{ display: "flex", background: T.chip, borderRadius: 999, padding: 3, ...style }}>
     {options.map(([k, lab]) => (
       <button key={k} onClick={() => onChange(k)} style={{
         flex: 1, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 13, padding: "8px 8px", borderRadius: 999,
-        fontFamily: "inherit", whiteSpace: "nowrap",
-        background: value === k ? T.accent : "transparent", color: value === k ? T.onAccent : T.sub,
+        fontFamily: "inherit", whiteSpace: "nowrap", transition: "background .15s",
+        background: value === k ? T.card : "transparent", color: value === k ? T.text : T.sub,
+        boxShadow: value === k ? "0 1px 3px rgba(0,0,0,.10)" : "none",
       }}>{lab}</button>
     ))}
   </div>
@@ -310,16 +337,19 @@ const Segmented = ({ T, value, onChange, options, style }) => (
 
 /* linha de formulário: rótulo à esquerda, controle à direita */
 const FieldRow = ({ T, label, children, last }) => (
-  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", background: T.card, borderBottom: last ? "none" : `1px solid ${T.line}` }}>
+  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 14px", background: T.card, borderBottom: last ? "none" : `1px solid ${T.line}`, minHeight: 52 }}>
     <span style={{ fontSize: 15.5, fontWeight: 500, color: T.text, flex: 1, minWidth: 0 }}>{label}</span>
     {children}
   </div>
 );
 
-const dateStyle = T => ({ ...inputStyle(T), width: 148, padding: "9px 10px", fontVariantNumeric: "tabular-nums" });
-const timeStyle = T => ({ ...inputStyle(T), width: 92, padding: "9px 10px", fontVariantNumeric: "tabular-nums" });
-const sectionLabel = T => ({ fontSize: 12.5, fontWeight: 700, color: T.sub, letterSpacing: .5, textTransform: "uppercase", margin: "18px 4px 8px" });
-const groupBox = T => ({ borderRadius: 16, overflow: "hidden", border: `1px solid ${T.line}` });
+/* botão de ícone redondo, usado nos cabeçalhos */
+const IconBtn = ({ T, icon, onClick, label, on, size = 36 }) => (
+  <button onClick={onClick} aria-label={label} style={{
+    width: size, height: size, borderRadius: 999, border: "none", cursor: "pointer", display: "grid", placeItems: "center", flexShrink: 0,
+    background: on ? T.accent : T.card, color: on ? T.onAccent : T.text, boxShadow: on ? "none" : T.shadow,
+  }}><Ic path={icon} size={17} /></button>
+);
 
 /* ── seletor de cor ── */
 const ColorGrid = ({ T, value, onChange }) => (
@@ -339,8 +369,7 @@ const ColorGrid = ({ T, value, onChange }) => (
 
 /* ═══════════════ FORMULÁRIO DE PLANTÃO ═══════════════ */
 function ShiftForm({ T, data, initial, mode, onSave, onDelete, onDuplicate, onClose, onCreateLocation }) {
-  const [f, setF] = useState(() => ({ ...initial, endDate: initial.endDate || endDateOf(initial), value: Number(initial.value) || 0 }));
-  /* qualquer mudança limpa o aviso de horário inválido */
+  const [f, setF] = useState(() => ({ ...initial, endDate: initial.endDate || endDateOf(initial), value: Number(initial.value) || 0, rateType: initial.rateType || "shift", rate: Number(initial.rate) || 0 }));
   const [showColors, setShowColors] = useState(false);
   const [showLoc, setShowLoc] = useState(false);
   const [showRepeat, setShowRepeat] = useState(false);
@@ -348,9 +377,18 @@ function ShiftForm({ T, data, initial, mode, onSave, onDelete, onDuplicate, onCl
   const set = p => setF(x => ({ ...x, _errTime: false, ...p }));
   const loc = data.locations.find(l => l.id === f.locationId);
   const mins = spanMin(f.date, f.startTime, f.endDate, f.endTime);
+  const hours = mins / 60;
   const multiDay = f.endDate !== f.date;
   const suggested = autoPay(loc, f.date);
+  const off = !!f.notDone;
   const label = sectionLabel(T);
+
+  /* valor por hora acompanha a duração */
+  useEffect(() => {
+    if (f.rateType !== "hour") return;
+    const v = Math.round((Number(f.rate) || 0) * hours * 100) / 100;
+    if (v !== f.value) setF(x => ({ ...x, value: v }));
+  }, [f.rateType, f.rate, hours]);
 
   /* mexer no início arrasta o fim junto, preservando a duração */
   const setStartDate = v => {
@@ -400,11 +438,11 @@ function ShiftForm({ T, data, initial, mode, onSave, onDelete, onDuplicate, onCl
 
   return (
     <Sheet T={T} title={mode === "edit" ? "Editar plantão" : "Novo plantão"} onClose={onClose}
-      footer={<button onClick={save} style={{ border: "none", background: T.accent, color: T.onAccent, fontWeight: 700, fontSize: 14, padding: "8px 8px", borderRadius: 999, cursor: "pointer", width: 60, fontFamily: "inherit" }}>Salvar</button>}>
+      footer={<button onClick={save} style={{ border: "none", background: T.accent, color: T.onAccent, fontWeight: 700, fontSize: 14, padding: "9px 8px", borderRadius: 999, cursor: "pointer", width: 62, fontFamily: "inherit" }}>Salvar</button>}>
 
       <input value={f.title} onChange={e => set({ title: e.target.value, _err: false })} placeholder="Título · ex: Plantão noturno"
-        style={{ ...inputStyle(T), fontSize: 17, fontWeight: 600, border: `1.5px solid ${f._err ? T.red : T.line}` }} />
-      {f._err && <div style={{ color: T.red, fontSize: 12.5, margin: "6px 4px 0" }}>Dê um título ao plantão para salvar.</div>}
+        style={{ ...inputStyle(T), fontSize: 17, fontWeight: 600, background: T.card, boxShadow: f._err ? `inset 0 0 0 1.5px ${T.red}` : T.shadow }} />
+      {f._err && <div style={{ color: T.red, fontSize: 12.5, margin: "6px 6px 0" }}>Dê um título ao plantão para salvar.</div>}
 
       {mode === "edit" && f.seriesId && (
         <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 10, color: T.sub, fontSize: 13 }}>
@@ -414,12 +452,11 @@ function ShiftForm({ T, data, initial, mode, onSave, onDelete, onDuplicate, onCl
 
       <div style={label}>Identificação</div>
       <div style={groupBox(T)}>
-        <Row T={T} first label="Cor" onClick={() => setShowColors(v => !v)} right={<span style={{ width: 22, height: 22, borderRadius: 999, background: f.color, display: "inline-block" }} />} />
+        <Row T={T} label="Cor" onClick={() => setShowColors(v => !v)} right={<span style={{ width: 20, height: 20, borderRadius: 999, background: f.color, display: "inline-block" }} />} />
         {showColors && <div style={{ padding: 16, background: T.card, borderBottom: `1px solid ${T.line}` }}><ColorGrid T={T} value={f.color} onChange={c => set({ color: c })} /></div>}
         <Row T={T} last label="Local" onClick={() => setShowLoc(true)}
-          right={loc ? <span style={{ display: "flex", alignItems: "center", gap: 7 }}><span style={{ width: 10, height: 10, borderRadius: 99, background: loc.color }} />{loc.name}</span> : <span style={{ color: T.accent, fontWeight: 600 }}>Associar</span>} />
+          right={loc ? <span style={{ display: "flex", alignItems: "center", gap: 7, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><span style={{ width: 9, height: 9, borderRadius: 99, background: loc.color, flexShrink: 0 }} />{loc.name}</span> : <span style={{ color: T.accent, fontWeight: 600 }}>Associar</span>} />
       </div>
-      {loc && <div style={{ fontSize: 12.5, color: T.sub, margin: "7px 6px 0" }}>Cor e sugestões vêm do local. Você pode ajustar o que quiser.</div>}
 
       <div style={label}>Horário</div>
       <div style={groupBox(T)}>
@@ -434,27 +471,37 @@ function ShiftForm({ T, data, initial, mode, onSave, onDelete, onDuplicate, onCl
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 10, overflowX: "auto", paddingBottom: 2 }}>
-        <span style={{ fontSize: 12.5, fontWeight: 700, color: T.sub, letterSpacing: .3, flexShrink: 0 }}>Duração</span>
+        <span style={{ fontSize: 12.5, fontWeight: 600, color: T.sub, flexShrink: 0 }}>Duração</span>
         {DUR_PRESETS.map(h => <Chip key={h} T={T} small on={mins === h * 60} onClick={() => setDur(h)}>{h}h</Chip>)}
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "9px 6px 0", color: T.sub, fontSize: 13, flexWrap: "wrap" }}>
-        <Ic path={P.clock} size={14} />
+      <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "9px 6px 0", color: T.sub, fontSize: 12.5, flexWrap: "wrap" }}>
+        <Ic path={P.clock} size={13} />
         {mins > 0 ? (<>
           <b style={{ color: T.text }}>{fmtDur(mins)}</b>
           <span>· termina {multiDay ? `${fmtWdDay(f.endDate)} às ${f.endTime}` : `às ${f.endTime}, no mesmo dia`}</span>
-          {f.value > 0 && <span>· <b style={{ color: T.text }}>{fmtBRL(f.value / (mins / 60))}</b>/h</span>}
         </>) : <span style={{ color: T.red, fontWeight: 600 }}>O fim precisa ser depois do início{f._errTime ? " para salvar" : ""}.</span>}
         {mins > 72 * 60 && <span style={{ color: T.amber, fontWeight: 600 }}>· confira: mais de 3 dias seguidos</span>}
       </div>
 
       <div style={label}>Valor e pagamento</div>
       <div style={groupBox(T)}>
-        <FieldRow T={T} label="Valor do plantão">
-          <MoneyInput T={T} value={f.value} onChange={v => set({ value: v })} width={168} big />
+        <div style={{ padding: "12px 14px 4px", background: T.card }}>
+          <Segmented T={T} value={f.rateType} onChange={k => set({ rateType: k, ...(k === "hour" && !f.rate && f.value && hours ? { rate: Math.round(f.value / hours * 100) / 100 } : {}) })}
+            options={[["shift", "Valor do plantão"], ["hour", "Valor por hora"]]} />
+        </div>
+        <FieldRow T={T} label={f.rateType === "hour" ? "Por hora" : "Total"}>
+          {f.rateType === "hour"
+            ? <MoneyInput T={T} value={f.rate} onChange={v => set({ rate: v })} width={168} big />
+            : <MoneyInput T={T} value={f.value} onChange={v => set({ value: v })} width={168} big />}
         </FieldRow>
-        {loc && loc.defaultValue > 0 && loc.defaultValue !== f.value && (
-          <button onClick={() => set({ value: loc.defaultValue })} style={{ width: "100%", border: "none", background: T.card, color: T.accent, fontWeight: 600, fontSize: 13.5, padding: "10px 14px", textAlign: "left", cursor: "pointer", borderBottom: `1px solid ${T.line}`, fontFamily: "inherit" }}>
+        <div style={{ background: T.card, padding: "0 14px 12px", fontSize: 12.5, color: T.sub, borderBottom: `1px solid ${T.line}` }}>
+          {f.rateType === "hour"
+            ? <>Total do plantão: <b style={{ color: T.text }}>{fmtBRL(f.value)}</b>{hours > 0 ? ` · ${fmtDur(mins)}` : ""}</>
+            : hours > 0 && f.value > 0 ? <>Equivale a <b style={{ color: T.text }}>{fmtBRL(f.value / hours)}</b> por hora</> : "Informe o valor combinado deste plantão."}
+        </div>
+        {loc && loc.defaultValue > 0 && loc.defaultValue !== f.value && f.rateType === "shift" && (
+          <button onClick={() => set({ value: loc.defaultValue })} style={{ width: "100%", border: "none", background: T.card, color: T.accent, fontWeight: 600, fontSize: 13.5, padding: "11px 14px", textAlign: "left", cursor: "pointer", borderBottom: `1px solid ${T.line}`, fontFamily: "inherit" }}>
             Usar valor padrão de {loc.name}: {fmtBRL(loc.defaultValue)}
           </button>
         )}
@@ -467,7 +514,6 @@ function ShiftForm({ T, data, initial, mode, onSave, onDelete, onDuplicate, onCl
           <Chip T={T} small on={f.paymentDate === addDays(f.date, 30)} onClick={() => set({ paymentDate: addDays(f.date, 30) })}>+30 dias</Chip>
           {f.paymentDate && <Chip T={T} small onClick={() => set({ paymentDate: "" })}>Sem data</Chip>}
         </div>
-        {!f.paymentDate && <div style={{ background: T.card, borderBottom: `1px solid ${T.line}`, padding: "0 14px 12px", fontSize: 12.5, color: T.sub }}>Sem data de recebimento este plantão não entra na previsão de caixa.</div>}
         <FieldRow T={T} label="Já foi pago" last={!f.paid}>
           <Toggle T={T} on={!!f.paid} onChange={v => set({ paid: v, paidAt: v ? (f.paidAt || (f.paymentDate && f.paymentDate <= todayStr() ? f.paymentDate : todayStr())) : null })} />
         </FieldRow>
@@ -478,10 +524,26 @@ function ShiftForm({ T, data, initial, mode, onSave, onDelete, onDuplicate, onCl
         )}
       </div>
 
+      <div style={label}>Situação</div>
+      <div style={groupBox(T)}>
+        <FieldRow T={T} label="Não realizado" last={!off}>
+          <Toggle T={T} on={off} onChange={v => set({ notDone: v, reason: v ? (f.reason || "troca") : null })} />
+        </FieldRow>
+        {off && (
+          <div style={{ background: T.card, padding: "2px 14px 14px" }}>
+            <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 10 }}>
+              {REASONS.map(([k, lab]) => <Chip key={k} T={T} small on={f.reason === k} onClick={() => set({ reason: k })}>{lab}</Chip>)}
+            </div>
+            <div style={{ fontSize: 12.5, color: T.sub, lineHeight: 1.45 }}>Continua no calendário como lembrete, mas não entra em nenhuma conta de horas nem de dinheiro.</div>
+          </div>
+        )}
+      </div>
+      <div style={{ fontSize: 12.5, color: T.sub, margin: "7px 6px 0" }}>Trocou o plantão, pegou folga ou faltou? Marque aqui.</div>
+
       {mode === "create" && (<>
-        <div style={label}>Repetição</div>
+        <div style={label}>Escala e repetição</div>
         <div style={groupBox(T)}>
-          <Row T={T} first last label="Repetir" onClick={() => setShowRepeat(true)} right={<span style={{ maxWidth: 190, textAlign: "right" }}>{repLabel(f.repeat)}</span>} />
+          <Row T={T} last label="Repetir" onClick={() => setShowRepeat(true)} right={<span style={{ maxWidth: 190, textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{repLabel(f.repeat)}</span>} />
         </div>
         {repDates.length > 1 && (
           <div style={{ fontSize: 12.5, color: T.sub, margin: "7px 6px 0", lineHeight: 1.5 }}>
@@ -492,15 +554,15 @@ function ShiftForm({ T, data, initial, mode, onSave, onDelete, onDuplicate, onCl
       </>)}
 
       <div style={label}>Observações</div>
-      <textarea value={f.notes || ""} onChange={e => set({ notes: e.target.value })} placeholder="Comentários, contato, setor…" rows={3}
-        style={{ ...inputStyle(T), resize: "vertical", minHeight: 70 }} />
+      <textarea value={f.notes || ""} onChange={e => set({ notes: e.target.value })} placeholder={off ? "Ex: troquei com a Ana" : "Comentários, contato, setor…"} rows={3}
+        style={{ ...inputStyle(T), background: T.card, boxShadow: T.shadow, resize: "vertical", minHeight: 70 }} />
 
       {mode === "edit" && (
         <div style={{ display: "flex", gap: 10, marginTop: 22 }}>
-          <button onClick={onDuplicate} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "13px", borderRadius: 14, border: `1px solid ${T.line}`, background: T.card, color: T.text, fontWeight: 600, fontSize: 14.5, cursor: "pointer", fontFamily: "inherit" }}>
+          <button onClick={onDuplicate} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "13px", borderRadius: 15, border: "none", background: T.card, color: T.text, fontWeight: 600, fontSize: 14.5, cursor: "pointer", fontFamily: "inherit", boxShadow: T.shadow }}>
             <Ic path={P.copy} size={16} /> Duplicar
           </button>
-          <button onClick={onDelete} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "13px", borderRadius: 14, border: "none", background: T.redSoft, color: T.red, fontWeight: 600, fontSize: 14.5, cursor: "pointer", fontFamily: "inherit" }}>
+          <button onClick={onDelete} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "13px", borderRadius: 15, border: "none", background: T.redSoft, color: T.red, fontWeight: 600, fontSize: 14.5, cursor: "pointer", fontFamily: "inherit" }}>
             <Ic path={P.trash} size={16} /> Apagar
           </button>
         </div>
@@ -509,15 +571,15 @@ function ShiftForm({ T, data, initial, mode, onSave, onDelete, onDuplicate, onCl
       {showLoc && (
         <Sheet T={T} title="Associar local" onClose={() => setShowLoc(false)}>
           <div style={groupBox(T)}>
-            <Row T={T} first label="Nenhum local" onClick={() => pickLocation(null)} right={!f.locationId && <Ic path={P.check} size={16} color={T.accent} />} />
+            <Row T={T} label="Nenhum local" onClick={() => pickLocation(null)} right={!f.locationId && <Ic path={P.check} size={16} color={T.accent} />} />
             {data.locations.map(l => (
               <Row key={l.id} T={T}
-                label={<span style={{ display: "flex", alignItems: "center", gap: 9 }}><span style={{ width: 11, height: 11, borderRadius: 99, background: l.color }} />{l.name}</span>}
+                label={<span style={{ display: "flex", alignItems: "center", gap: 9 }}><span style={{ width: 10, height: 10, borderRadius: 99, background: l.color }} />{l.name}</span>}
                 onClick={() => pickLocation(l.id)} right={f.locationId === l.id && <Ic path={P.check} size={16} color={T.accent} />} />
             ))}
             <button onClick={() => setNewLoc({ id: null, name: "", address: "", color: PALETTE[(data.locations.length + 1) % PALETTE.length], payType: "none", payValue: 30, defaultValue: 0, defaultStart: "", defaultEnd: "" })}
               style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", background: T.card, border: "none", cursor: "pointer", textAlign: "left", fontFamily: "inherit", color: T.accent, fontWeight: 700, fontSize: 15.5 }}>
-              <span style={{ width: 22, height: 22, borderRadius: 99, background: T.accentSoft, display: "grid", placeItems: "center" }}><Ic path={P.plus} size={14} color={T.accent} /></span>
+              <span style={{ width: 21, height: 21, borderRadius: 99, background: T.accentSoft, display: "grid", placeItems: "center" }}><Ic path={P.plus} size={13} color={T.accent} /></span>
               Novo local
             </button>
           </div>
@@ -533,30 +595,57 @@ function ShiftForm({ T, data, initial, mode, onSave, onDelete, onDuplicate, onCl
       )}
 
       {showRepeat && (
-        <RepeatSheet T={T} value={f.repeat || { type: "none" }} baseDate={f.date}
-          onChange={rep => set({ repeat: rep })} onClose={() => setShowRepeat(false)} />
+        <RepeatSheet T={T} value={f.repeat || { type: "none" }} baseDate={f.date} durMin={mins}
+          onChange={(rep, durH) => set({ repeat: rep, ...(durH ? (() => { const e = plusMin(f.date, f.startTime, durH * 60); return { endDate: e.date, endTime: e.time }; })() : {}) })}
+          onClose={() => setShowRepeat(false)} />
       )}
     </Sheet>
   );
 }
 
-function RepeatSheet({ T, value, baseDate, onChange, onClose }) {
+function RepeatSheet({ T, value, baseDate, durMin, onChange, onClose }) {
   const [r, setR] = useState({ weekdays: [pd(baseDate).getDay()], every: 2, endMode: "until", until: addMonths(baseDate, 3), count: 12, ...value });
+  const [durH, setDurH] = useState(null);
   const opts = [
     ["none", "Nunca"], ["daily", "Todos os dias"], ["weekly", "Toda semana"], ["biweekly", "A cada 2 semanas"],
     ["monthlyDay", "Todo mês · mesmo dia"], ["monthlyPos", `Todo mês · ${["1º", "2º", "3º", "4º", "5º"][Math.floor((pd(baseDate).getDate() - 1) / 7)]} ${WD_FULL[pd(baseDate).getDay()]}`], ["custom", "Personalizado"],
   ];
   const needsWd = r.type === "weekly" || r.type === "biweekly";
   const preview = useMemo(() => (r.type === "none" ? [] : genDates(baseDate, r)), [r, baseDate]);
-  const apply = () => { onChange(r.type === "none" ? { type: "none" } : r); onClose(); };
+  const apply = () => { onChange(r.type === "none" ? { type: "none" } : r, durH); onClose(); };
   const setEnd = p => setR(x => ({ ...x, ...p }));
+  const pickScale = sc => {
+    setDurH(sc.h);
+    setR(x => ({ ...x, type: "custom", every: sc.every, scale: sc.k, endMode: x.endMode === "never" ? "never" : x.endMode || "until" }));
+  };
+  const activeScale = SCALES.find(sc => r.scale === sc.k && r.type === "custom" && Number(r.every) === sc.every);
+
   return (
-    <Sheet T={T} title="Repetir" onClose={onClose}
-      footer={<button onClick={apply} style={{ border: "none", background: T.accent, color: T.onAccent, fontWeight: 700, fontSize: 14, padding: "8px 8px", borderRadius: 999, cursor: "pointer", width: 60, fontFamily: "inherit" }}>OK</button>}>
+    <Sheet T={T} title="Escala e repetição" onClose={onClose}
+      footer={<button onClick={apply} style={{ border: "none", background: T.accent, color: T.onAccent, fontWeight: 700, fontSize: 14, padding: "9px 8px", borderRadius: 999, cursor: "pointer", width: 62, fontFamily: "inherit" }}>OK</button>}>
+
+      <div style={{ ...sectionLabel(T), marginTop: 4 }}>Escalas prontas</div>
+      <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4 }}>
+        {SCALES.map(sc => (
+          <button key={sc.k} onClick={() => pickScale(sc)} style={{
+            flexShrink: 0, border: "none", cursor: "pointer", fontFamily: "inherit", borderRadius: 16, padding: "11px 14px", textAlign: "left",
+            background: activeScale === sc ? T.accent : T.card, color: activeScale === sc ? T.onAccent : T.text, boxShadow: activeScale === sc ? "none" : T.shadow,
+          }}>
+            <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 16 }}>{sc.k}</div>
+            <div style={{ fontSize: 11.5, opacity: .8, marginTop: 1 }}>{sc.desc}</div>
+          </button>
+        ))}
+      </div>
+      <div style={{ fontSize: 12.5, color: T.sub, margin: "8px 6px 0", lineHeight: 1.45 }}>
+        A escala ajusta a duração do plantão e o intervalo entre eles de uma vez.
+        {durH ? <> Duração ajustada para <b style={{ color: T.text }}>{durH}h</b>.</> : durMin > 0 ? <> Hoje o plantão tem {fmtDur(durMin)}.</> : null}
+      </div>
+
+      <div style={sectionLabel(T)}>Ou defina a repetição</div>
       <div style={groupBox(T)}>
         {opts.map(([k, lab], i) => (
-          <Row key={k} T={T} first={i === 0} last={i === opts.length - 1} label={lab}
-            onClick={() => setR(x => ({ ...x, type: k }))} right={r.type === k && <Ic path={P.check} size={16} color={T.accent} />} />
+          <Row key={k} T={T} last={i === opts.length - 1} label={lab}
+            onClick={() => setR(x => ({ ...x, type: k, scale: null }))} right={r.type === k && <Ic path={P.check} size={16} color={T.accent} />} />
         ))}
       </div>
 
@@ -566,15 +655,15 @@ function RepeatSheet({ T, value, baseDate, onChange, onClose }) {
           {WD.map((w, i) => {
             const on = (r.weekdays || []).includes(i);
             return <button key={i} onClick={() => setR(x => ({ ...x, weekdays: on ? x.weekdays.filter(d => d !== i) : [...(x.weekdays || []), i] }))}
-              style={{ flex: 1, padding: "10px 0", borderRadius: 12, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 13, fontFamily: "inherit", background: on ? T.accent : T.card, color: on ? T.onAccent : T.text, boxShadow: on ? "none" : `inset 0 0 0 1px ${T.line}` }}>{w}</button>;
+              style={{ flex: 1, padding: "11px 0", borderRadius: 13, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 13, fontFamily: "inherit", background: on ? T.accent : T.card, color: on ? T.onAccent : T.sub, boxShadow: on ? "none" : T.shadow }}>{w}</button>;
           })}
         </div>
       </>)}
 
       {r.type === "custom" && (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14 }}>
           <span style={{ color: T.text, fontSize: 15 }}>A cada</span>
-          <input type="number" min={1} value={r.every} onChange={e => setR(x => ({ ...x, every: e.target.value }))} style={{ ...inputStyle(T), width: 80, textAlign: "center" }} />
+          <input type="number" min={1} value={r.every} onChange={e => setR(x => ({ ...x, every: e.target.value, scale: null }))} style={{ ...inputStyle(T), width: 80, textAlign: "center" }} />
           <span style={{ color: T.text, fontSize: 15 }}>dias</span>
         </div>
       )}
@@ -585,7 +674,7 @@ function RepeatSheet({ T, value, baseDate, onChange, onClose }) {
           options={[["until", "Em uma data"], ["count", "Após X vezes"], ["never", "Nunca"]]} />
 
         {repEnd(r) === "until" && (<>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 14 }}>
             <span style={{ color: T.text, fontSize: 15, fontWeight: 500 }}>Repetir até</span>
             <input type="date" value={r.until} min={baseDate} onChange={e => setEnd({ until: e.target.value })} style={dateStyle(T)} />
           </div>
@@ -597,7 +686,7 @@ function RepeatSheet({ T, value, baseDate, onChange, onClose }) {
         </>)}
 
         {repEnd(r) === "count" && (
-          <div style={{ marginTop: 12 }}>
+          <div style={{ marginTop: 14 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <span style={{ color: T.text, fontSize: 15 }}>Repetir</span>
               <input type="number" min={1} max={MAX_OCC} value={r.count} onChange={e => setEnd({ count: e.target.value })} style={{ ...inputStyle(T), width: 90, textAlign: "center" }} />
@@ -610,22 +699,22 @@ function RepeatSheet({ T, value, baseDate, onChange, onClose }) {
         )}
 
         {repEnd(r) === "never" && (
-          <div style={{ fontSize: 13, color: T.sub, margin: "12px 4px 0", lineHeight: 1.5 }}>
+          <div style={{ fontSize: 13, color: T.sub, margin: "12px 6px 0", lineHeight: 1.5 }}>
             Sem data para acabar. O app já deixa criados os próximos <b style={{ color: T.text }}>{OPEN_MONTHS} meses</b> (até {MAX_OCC} plantões) — quando chegar perto do fim, é só abrir o último e repetir de novo.
           </div>
         )}
 
-        <div style={{ marginTop: 16, background: T.card, border: `1px solid ${T.line}`, borderRadius: 16, padding: 14 }}>
-          <div style={{ fontSize: 13, color: T.sub }}>Resultado</div>
+        <Card T={T} style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 12.5, color: T.sub }}>Resultado</div>
           <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 19, color: T.text, marginTop: 2 }}>
             {preview.length} {preview.length === 1 ? "plantão" : "plantões"}
           </div>
           {preview.length > 0 && (
-            <div style={{ fontSize: 13, color: T.sub, marginTop: 4, lineHeight: 1.5 }}>
+            <div style={{ fontSize: 12.5, color: T.sub, marginTop: 4, lineHeight: 1.5 }}>
               {preview.slice(0, 3).map(d => fmtWdDay(d)).join(" · ")}{preview.length > 3 ? ` … último em ${fmtDateShort(preview[preview.length - 1])}` : ""}
             </div>
           )}
-        </div>
+        </Card>
       </>)}
     </Sheet>
   );
@@ -638,6 +727,7 @@ function ShiftCard({ T, s, data, onOpen, onTogglePaid, showDate, showPayInfo, co
   const end = endDateOf(s);
   const multi = end !== s.date;
   const today = todayStr();
+  const off = !isOn(s);
   const overdue = isOverdue(s, today);
   const daysToPay = s.paymentDate ? daysBetween(today, s.paymentDate) : null;
   const payLine = s.paid
@@ -650,32 +740,39 @@ function ShiftCard({ T, s, data, onOpen, onTogglePaid, showDate, showPayInfo, co
   /* o selo fica FORA do botão do card: dentro dele o clique é reatribuído ao botão
      e acabava abrindo o editor em vez de marcar como pago */
   return (
-    <div style={{ width: "100%", display: "flex", gap: 12, padding: "13px 14px", background: T.card, border: `1px solid ${T.line}`, borderRadius: 18, fontFamily: "inherit", opacity: cont ? .82 : 1 }}>
+    <div style={{ width: "100%", display: "flex", gap: 12, padding: "13px 14px", background: T.card, borderRadius: 20, boxShadow: T.shadow, fontFamily: "inherit", opacity: cont ? .78 : 1 }}>
       <button onClick={onOpen} style={{ flex: 1, minWidth: 0, display: "flex", gap: 12, alignItems: "stretch", background: "transparent", border: "none", padding: 0, textAlign: "left", cursor: "pointer", fontFamily: "inherit" }}>
-      <div style={{ width: 4.5, alignSelf: "stretch", borderRadius: 99, background: s.color, flexShrink: 0 }} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ fontWeight: 700, fontSize: 15.5, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</span>
-          {s.seriesId && <Ic path={P.repeat} size={13} color={T.sub} />}
-          {cont && <span style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: .3, color: T.accent, background: T.accentSoft, padding: "2px 6px", borderRadius: 6, whiteSpace: "nowrap" }}>EM ANDAMENTO</span>}
+        <div style={{ width: 4, alignSelf: "stretch", borderRadius: 99, background: s.color, flexShrink: 0, opacity: off ? .45 : 1 }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontWeight: 700, fontSize: 15.5, color: off ? T.sub : T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: off ? "line-through" : "none" }}>{s.title}</span>
+            {s.seriesId && <Ic path={P.repeat} size={12.5} color={T.sub} />}
+            {cont && <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: .3, color: T.accent, background: T.accentSoft, padding: "2px 6px", borderRadius: 6, whiteSpace: "nowrap" }}>EM ANDAMENTO</span>}
+          </div>
+          {(loc || off) && (
+            <div style={{ fontSize: 12.5, color: T.sub, marginTop: 2, display: "flex", alignItems: "center", gap: 6 }}>
+              {loc && <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{loc.name}</span>}
+              {off && <span style={{ display: "flex", alignItems: "center", gap: 4, color: T.sub, flexShrink: 0 }}><Ic path={P.off} size={11} /> {reasonLabel(s.reason)}</span>}
+            </div>
+          )}
+          <div style={{ fontSize: 12.5, color: T.sub, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>
+            {multi
+              ? <>{fmtDayMon(s.date)} {s.startTime} → {fmtDayMon(end)} {s.endTime} · <b style={{ color: off ? T.sub : T.text }}>{fmtDur(mins)}</b></>
+              : <>{showDate && <>{fmtDayMon(s.date)} · </>}{s.startTime}–{s.endTime} · {fmtDur(mins)}</>}
+          </div>
+          {showPayInfo && !off && (
+            <div style={{ fontSize: 12, color: overdue ? T.red : T.sub, marginTop: 3, fontWeight: overdue ? 600 : 400 }}>{payLine}</div>
+          )}
         </div>
-        {loc && <div style={{ fontSize: 13, color: T.sub, marginTop: 2 }}>{loc.name}</div>}
-        <div style={{ fontSize: 13, color: T.sub, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>
-          {multi
-            ? <>{fmtDayMon(s.date)} {s.startTime} → {fmtDayMon(end)} {s.endTime} · <b style={{ color: T.text }}>{fmtDur(mins)}</b></>
-            : <>{showDate && <>{fmtDateLong(s.date)} · </>}{s.startTime}–{s.endTime} · {fmtDur(mins)}</>}
-        </div>
-        {showPayInfo && (
-          <div style={{ fontSize: 12.5, color: overdue ? T.red : T.sub, marginTop: 3, fontWeight: overdue ? 600 : 400 }}>{payLine}</div>
-        )}
-      </div>
       </button>
       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, justifyContent: "center", flexShrink: 0 }}>
-        <button onClick={onOpen} style={{ border: "none", background: "transparent", padding: 0, cursor: "pointer", fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 15.5, color: T.text, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(s.value)}</button>
-        <button onClick={onTogglePaid} aria-label={s.paid ? "Marcar como não recebido" : "Marcar como recebido"}
-          style={{ border: "none", background: "transparent", padding: 0, cursor: "pointer", fontFamily: "inherit" }}>
-          <Badge T={T} paid={s.paid} overdue={overdue} />
-        </button>
+        <button onClick={onOpen} style={{ border: "none", background: "transparent", padding: 0, cursor: "pointer", fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 15.5, color: off ? T.sub : T.text, fontVariantNumeric: "tabular-nums", textDecoration: off ? "line-through" : "none" }}>{fmtBRL(s.value)}</button>
+        {off ? <Badge T={T} off /> : (
+          <button onClick={onTogglePaid} aria-label={s.paid ? "Marcar como não recebido" : "Marcar como recebido"}
+            style={{ border: "none", background: "transparent", padding: 0, cursor: "pointer", fontFamily: "inherit" }}>
+            <Badge T={T} paid={s.paid} overdue={overdue} />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -687,25 +784,26 @@ function UpcomingRow({ T, s, data, onOpen }) {
   const end = endDateOf(s), multi = end !== s.date;
   const today = todayStr();
   const running = s.date <= today && end >= today && s.date !== today;
+  const off = !isOn(s);
   const d = pd(s.date);
   return (
-    <button onClick={onOpen} style={{ width: "100%", textAlign: "left", display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", background: T.card, border: `1px solid ${T.line}`, borderRadius: 16, cursor: "pointer", fontFamily: "inherit" }}>
-      <div style={{ width: 46, flexShrink: 0, borderRadius: 12, background: s.color + "1F", padding: "6px 0", textAlign: "center", boxShadow: `inset 0 0 0 1px ${s.color}33` }}>
-        <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 18, color: s.color, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{d.getDate()}</div>
-        <div style={{ fontSize: 10, fontWeight: 700, color: s.color, textTransform: "uppercase", letterSpacing: .4, marginTop: 2 }}>{MONTHS_S[d.getMonth()]}</div>
+    <button onClick={onOpen} style={{ width: "100%", textAlign: "left", display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", background: T.card, border: "none", borderRadius: 18, cursor: "pointer", fontFamily: "inherit", boxShadow: T.shadow, opacity: off ? .7 : 1 }}>
+      <div style={{ width: 44, flexShrink: 0, borderRadius: 13, background: off ? T.chip : s.color + "1A", padding: "6px 0", textAlign: "center" }}>
+        <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 17, color: off ? T.sub : s.color, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{d.getDate()}</div>
+        <div style={{ fontSize: 9.5, fontWeight: 700, color: off ? T.sub : s.color, textTransform: "uppercase", letterSpacing: .4, marginTop: 2 }}>{MONTHS_S[d.getMonth()]}</div>
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ fontWeight: 700, fontSize: 14.5, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</span>
-          {s.seriesId && <Ic path={P.repeat} size={12} color={T.sub} />}
+          <span style={{ fontWeight: 700, fontSize: 14.5, color: off ? T.sub : T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: off ? "line-through" : "none" }}>{s.title}</span>
+          {s.seriesId && <Ic path={P.repeat} size={11.5} color={T.sub} />}
         </div>
-        <div style={{ fontSize: 12.5, color: T.sub, marginTop: 2, fontVariantNumeric: "tabular-nums", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          <span style={{ color: running ? T.accent : T.sub, fontWeight: running ? 700 : 600 }}>{running ? "em andamento" : relDay(s.date)}</span>
+        <div style={{ fontSize: 12, color: T.sub, marginTop: 2, fontVariantNumeric: "tabular-nums", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <span style={{ color: off ? T.sub : running ? T.accent : T.sub, fontWeight: running || off ? 700 : 600 }}>{off ? reasonLabel(s.reason).toLowerCase() : running ? "em andamento" : relDay(s.date)}</span>
           {" · "}{s.startTime}–{s.endTime}{multi ? `+${daysBetween(s.date, end)}d` : ""} · {fmtDur(shiftMin(s))}
           {loc ? ` · ${loc.name}` : ""}
         </div>
       </div>
-      <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 14.5, color: T.text, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{fmtBRL(s.value)}</span>
+      <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 14.5, color: off ? T.sub : T.text, fontVariantNumeric: "tabular-nums", flexShrink: 0, textDecoration: off ? "line-through" : "none" }}>{fmtBRL(s.value)}</span>
     </button>
   );
 }
@@ -732,8 +830,9 @@ function CalendarView({ T, data, cursor, setCursor, sel, setSel, openCreate, ope
   }, [data.shifts]);
 
   const monthShifts = data.shifts.filter(s => mKey(s.date) === `${y}-${pad(m + 1)}`);
-  const monthTotal = monthShifts.reduce((a, s) => a + (s.value || 0), 0);
-  const monthHours = monthShifts.reduce((a, s) => a + shiftHours(s), 0);
+  const monthDone = monthShifts.filter(isOn);
+  const monthTotal = monthDone.reduce((a, s) => a + (s.value || 0), 0);
+  const monthHours = monthDone.reduce((a, s) => a + shiftHours(s), 0);
   const dayShifts = (byDay[sel] || []).slice().sort((a, b) => (a.date + a.startTime).localeCompare(b.date + b.startTime));
   const today = todayStr();
   const selD = pd(sel);
@@ -744,70 +843,86 @@ function CalendarView({ T, data, cursor, setCursor, sel, setSel, openCreate, ope
     .slice(0, 6), [data.shifts, today]);
   const next30 = useMemo(() => {
     const lim = addDays(today, 30);
-    const arr = data.shifts.filter(s => s.date >= today && s.date <= lim);
+    const arr = data.shifts.filter(s => isOn(s) && s.date >= today && s.date <= lim);
     return { n: arr.length, v: arr.reduce((a, s) => a + (s.value || 0), 0) };
   }, [data.shifts, today]);
 
+  /* anel colorido no dia, como no calendário de papel: cor do plantão */
+  const dayStyle = (c, shifts, isSel, isToday) => {
+    const base = {
+      width: 34, height: 34, borderRadius: 999, display: "grid", placeItems: "center", fontSize: 15,
+      fontVariantNumeric: "tabular-nums", fontWeight: isToday || isSel || shifts.length ? 700 : 500,
+      color: isSel ? T.onAccent : c.out ? T.sub + "70" : isToday ? T.accent : T.text,
+      background: isSel ? T.accent : isToday && !shifts.length ? T.chip : "transparent",
+      border: "1.5px solid transparent", boxSizing: "border-box", transition: "background .15s",
+    };
+    if (isSel || !shifts.length) return base;
+    const starts = shifts.filter(s => s.date === c.str);
+    const main = starts[0] || shifts[0];
+    const cont = !starts.length;
+    const alpha = c.out ? "55" : cont ? "70" : "";
+    if (shifts.every(s => !isOn(s))) return { ...base, border: `1.5px dashed ${main.color}${alpha || "99"}`, color: T.sub };
+    const rings = [`inset 0 0 0 2px ${main.color}${alpha}`];
+    const other = shifts.find(s => s.color !== main.color);
+    if (other) rings.push(`0 0 0 2px ${other.color}${alpha}`);
+    return { ...base, boxShadow: rings.join(", ") };
+  };
+
   return (
-    <div style={{ padding: "14px 16px 0" }}>
+    <div style={{ padding: "10px 16px 0" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-        <button onClick={() => { const t = new Date(); setCursor(new Date(t.getFullYear(), t.getMonth(), 1)); setSel(todayStr()); }}
-          style={{ border: "none", background: T.card, color: T.accent, fontWeight: 700, fontSize: 13.5, padding: "9px 14px", borderRadius: 999, cursor: "pointer", boxShadow: `inset 0 0 0 1px ${T.line}`, fontFamily: "inherit" }}>Hoje</button>
         <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
-          <button onClick={() => setCursor(new Date(y, m - 1, 1))} aria-label="Mês anterior" style={{ border: "none", background: "transparent", color: T.text, cursor: "pointer", padding: 6 }}><Ic path={P.chevL} size={20} /></button>
-          <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 19, color: T.text, minWidth: 150, textAlign: "center", letterSpacing: .3 }}>
-            {MONTHS[m]} <span style={{ color: T.sub, fontWeight: 600 }}>{y}</span>
+          <button onClick={() => setCursor(new Date(y, m - 1, 1))} aria-label="Mês anterior" style={{ border: "none", background: "transparent", color: T.sub, cursor: "pointer", padding: "6px 4px" }}><Ic path={P.chevL} size={19} /></button>
+          <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 22, color: T.text, letterSpacing: -.3 }}>
+            {MONTHS[m]} <span style={{ color: T.sub, fontWeight: 500 }}>{y}</span>
           </div>
-          <button onClick={() => setCursor(new Date(y, m + 1, 1))} aria-label="Próximo mês" style={{ border: "none", background: "transparent", color: T.text, cursor: "pointer", padding: 6 }}><Ic path={P.chevR} size={20} /></button>
+          <button onClick={() => setCursor(new Date(y, m + 1, 1))} aria-label="Próximo mês" style={{ border: "none", background: "transparent", color: T.sub, cursor: "pointer", padding: "6px 4px" }}><Ic path={P.chevR} size={19} /></button>
         </div>
-        <button onClick={() => openCreate(sel)} aria-label="Novo plantão" style={{ border: "none", background: T.accent, color: T.onAccent, width: 38, height: 38, borderRadius: 999, cursor: "pointer", display: "grid", placeItems: "center", boxShadow: T.shadow }}><Ic path={P.plus} size={18} /></button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {(sel !== today || mKey(today) !== `${y}-${pad(m + 1)}`) && (
+            <button onClick={() => { const t = new Date(); setCursor(new Date(t.getFullYear(), t.getMonth(), 1)); setSel(todayStr()); }}
+              style={{ border: "none", background: "transparent", color: T.accent, fontWeight: 700, fontSize: 14, padding: "8px 6px", cursor: "pointer", fontFamily: "inherit" }}>Hoje</button>
+          )}
+          <button onClick={() => openCreate(sel)} aria-label="Novo plantão" style={{ border: "none", background: T.accent, color: T.onAccent, width: 38, height: 38, borderRadius: 999, cursor: "pointer", display: "grid", placeItems: "center", boxShadow: T.shadow }}><Ic path={P.plus} size={19} /></button>
+        </div>
       </div>
 
-      {monthShifts.length > 0 && (
-        <div style={{ fontSize: 13, color: T.sub, textAlign: "center", marginTop: 8 }}>
-          {monthShifts.length} {monthShifts.length === 1 ? "plantão" : "plantões"} · {fmtH(monthHours)} · <b style={{ color: T.text }}>{fmtBRL(monthTotal)}</b>
-        </div>
-      )}
+      <div style={{ fontSize: 12.5, color: T.sub, marginTop: 6, height: 16 }}>
+        {monthDone.length > 0 && <>{monthDone.length} {monthDone.length === 1 ? "plantão" : "plantões"} · {fmtH(monthHours)} · <b style={{ color: T.text }}>{fmtBRL(monthTotal)}</b></>}
+      </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", marginTop: 12 }}>
-        {WD.map(w => <div key={w} style={{ textAlign: "center", fontSize: 11.5, fontWeight: 700, color: T.sub, letterSpacing: .5, padding: "4px 0" }}>{w}</div>)}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", marginTop: 8 }}>
+        {WD.map(w => <div key={w} style={{ textAlign: "center", fontSize: 11, fontWeight: 700, color: T.sub, letterSpacing: .3, padding: "6px 0" }}>{w[0]}</div>)}
         {cells.map((c, i) => {
           const shifts = byDay[c.str] || [];
           const isSel = c.str === sel, isToday = c.str === today;
           return (
             <button key={i} onClick={() => { setSel(c.str); if (c.out) setCursor(pd(c.str.slice(0, 8) + "01")); }} style={{
-              border: "none", background: "transparent", cursor: "pointer", padding: "3px 0 6px", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, minHeight: 48, fontFamily: "inherit",
+              border: "none", background: "transparent", cursor: "pointer", padding: "4px 0 5px", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, minHeight: 46, fontFamily: "inherit",
             }}>
-              <span style={{
-                width: 32, height: 32, borderRadius: 999, display: "grid", placeItems: "center", fontSize: 15, fontVariantNumeric: "tabular-nums",
-                fontWeight: isToday || isSel ? 700 : 500,
-                color: isSel ? T.onAccent : c.out ? T.sub + "80" : isToday ? T.accent : T.text,
-                background: isSel ? T.accent : "transparent",
-                boxShadow: isToday && !isSel ? `inset 0 0 0 1.5px ${T.accent}` : "none",
-              }}>{c.n}</span>
-              <span style={{ display: "flex", gap: 3, height: 5 }}>
-                {shifts.slice(0, 3).map((s, j) => (
-                  <span key={j} style={{
-                    width: s.date === c.str ? 5 : 4, height: s.date === c.str ? 5 : 4, borderRadius: 99, background: s.color,
-                    opacity: (c.out ? .4 : 1) * (s.date === c.str ? 1 : .5), alignSelf: "center",
-                  }} />
-                ))}
+              <span style={dayStyle(c, shifts, isSel, isToday)}>{c.n}</span>
+              <span style={{ height: 4, display: "flex", alignItems: "center" }}>
+                {shifts.length > 2 && <span style={{ fontSize: 9, fontWeight: 800, color: T.sub }}>{shifts.length}</span>}
               </span>
             </button>
           );
         })}
       </div>
 
-      <div style={{ marginTop: 14, display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-        <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 16, color: T.text }}>
-          {WD_FULL[selD.getDay()].charAt(0).toUpperCase() + WD_FULL[selD.getDay()].slice(1)}, {fmtDateLong(sel)}
+      <div style={{ marginTop: 12, display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+        <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 15.5, color: T.text }}>
+          {WD_FULL[selD.getDay()].charAt(0).toUpperCase() + WD_FULL[selD.getDay()].slice(1)}, {fmtDayMon(sel)}
         </div>
-        {dayShifts.length > 0 && <div style={{ fontSize: 13.5, color: T.sub, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(dayShifts.filter(s => s.date === sel).reduce((a, s) => a + (s.value || 0), 0))}</div>}
+        {dayShifts.some(s => s.date === sel && isOn(s)) && (
+          <div style={{ fontSize: 13, color: T.sub, fontVariantNumeric: "tabular-nums" }}>
+            {fmtBRL(dayShifts.filter(s => s.date === sel && isOn(s)).reduce((a, s) => a + (s.value || 0), 0))}
+          </div>
+        )}
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 9, marginTop: 10 }}>
         {dayShifts.length === 0 ? (
-          <button onClick={() => openCreate(sel)} style={{ border: `1.5px dashed ${T.line}`, background: "transparent", borderRadius: 18, padding: "22px 16px", color: T.sub, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+          <button onClick={() => openCreate(sel)} style={{ border: `1.5px dashed ${T.line}`, background: "transparent", borderRadius: 20, padding: "20px 16px", color: T.sub, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
             Nenhum plantão neste dia. <span style={{ color: T.accent, fontWeight: 700 }}>Toque para criar.</span>
           </button>
         ) : dayShifts.map(s => (
@@ -816,9 +931,9 @@ function CalendarView({ T, data, cursor, setCursor, sel, setSel, openCreate, ope
       </div>
 
       {upcoming.length > 0 && (
-        <div style={{ marginTop: 24 }}>
+        <div style={{ marginTop: 26 }}>
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 10 }}>
-            <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 16, color: T.text }}>Próximos plantões</div>
+            <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 15.5, color: T.text }}>Próximos plantões</div>
             {next30.n > 0 && <div style={{ fontSize: 12.5, color: T.sub, fontVariantNumeric: "tabular-nums" }}>30 dias · {next30.n} · <b style={{ color: T.text }}>{fmtBRL(next30.v)}</b></div>}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -843,18 +958,24 @@ function CalendarView({ T, data, cursor, setCursor, sel, setSel, openCreate, ope
    · TRABALHO  (competência) → pela data do plantão: quanto você produziu no mês.
    · CAIXA     (financeiro)  → recebido = data em que o dinheiro entrou (paidAt);
                                a receber = data prevista (paymentDate) dos não pagos.
-   "Atrasado" é sempre não pago com data prevista já vencida.                      */
-function PaymentsView({ T, data, cursor, setCursor, openEdit, togglePaid, markPaid, setDialog }) {
+   Plantões marcados como não realizados ficam fora de tudo.                      */
+function PaymentsView({ T, data, cursor, setCursor, openEdit, togglePaid, markPaid, setDialog, setData }) {
   const [tab, setTab] = useState("pay");        // pay = a receber · got = recebidos · work = trabalhados
-  const [byLoc, setByLoc] = useState(false);
   const [info, setInfo] = useState(false);
+  const [filt, setFilt] = useState(false);
   const [openNoDate, setOpenNoDate] = useState(false);
   const y = cursor.getFullYear(), m = cursor.getMonth();
   const mk = `${y}-${pad(m + 1)}`;
   const today = todayStr();
-  const S = data.shifts;
   const sum = arr => arr.reduce((a, s) => a + (s.value || 0), 0);
   const isCurrent = mk === mKey(today);
+
+  const st = data.settings;
+  const byLoc = !!st.groupByLoc;
+  const desc = !!st.sortDesc;                          // padrão: mais antigos primeiro
+  const hidden = st.hiddenLocs || [];
+  const locOk = s => !hidden.includes(s.locationId || "_none");
+  const S = useMemo(() => data.shifts.filter(s => isOn(s) && locOk(s)), [data.shifts, hidden]);
 
   const worked = useMemo(() => S.filter(s => mKey(s.date) === mk), [S, mk]);
   const got = useMemo(() => S.filter(s => s.paid && mKey(paidAtOf(s)) === mk), [S, mk]);
@@ -863,11 +984,10 @@ function PaymentsView({ T, data, cursor, setCursor, openEdit, togglePaid, markPa
   const oldOverdue = useMemo(() => overdueAll.filter(s => mKey(s.paymentDate) < mk), [overdueAll, mk]);
   const noDate = useMemo(() => S.filter(s => !s.paid && !s.paymentDate), [S]);
 
-  const gotV = sum(got);
-  const dueV = sum(due);
+  const gotV = sum(got), dueV = sum(due);
   const lateM = due.filter(s => s.paymentDate < today), lateMV = sum(lateM);
-  const openV = dueV - lateMV;                        // ainda vai vencer neste mês
-  const expected = gotV + dueV;                       // caixa previsto do mês
+  const openV = dueV - lateMV;
+  const expected = gotV + dueV;
   const pct = expected > 0 ? (gotV >= expected ? 100 : Math.min(99, Math.floor(gotV / expected * 100))) : 0;
   const workedV = sum(worked);
   const workedH = worked.reduce((a, s) => a + shiftHours(s), 0);
@@ -893,8 +1013,8 @@ function PaymentsView({ T, data, cursor, setCursor, openEdit, togglePaid, markPa
     }
     const g = {};
     for (const s of items) { const k = keyOf(s); (g[k] = g[k] || []).push(s); }
-    return Object.entries(g).sort((a, b) => a[0].localeCompare(b[0])).map(([k, arr]) => ({ k, arr }));
-  }, [items, byLoc, tab]);
+    return Object.entries(g).sort((a, b) => (desc ? b[0].localeCompare(a[0]) : a[0].localeCompare(b[0]))).map(([k, arr]) => ({ k, arr }));
+  }, [items, byLoc, tab, desc]);
 
   const receiveGroup = (arr, label) => setDialog({
     title: "Marcar como recebido?",
@@ -904,125 +1024,118 @@ function PaymentsView({ T, data, cursor, setCursor, openEdit, togglePaid, markPa
 
   const bigLabel = tab === "pay" ? "A receber em" : tab === "got" ? "Recebido em" : "Trabalhado em";
   const bigValue = tab === "pay" ? dueV : tab === "got" ? gotV : workedV;
-  const emptyMsg = tab === "pay"
-    ? "Nada previsto para receber neste mês."
+  const emptyMsg = tab === "pay" ? "Nada previsto para receber neste mês."
     : tab === "got" ? "Nenhum recebimento registrado neste mês." : "Nenhum plantão realizado neste mês.";
+  const stripe = `repeating-linear-gradient(45deg, ${T.amber} 0 4px, ${T.amberSoft} 4px 8px)`;
+  const bar = expected > 0 ? [{ w: gotV / expected, bg: T.accent }, { w: openV / expected, bg: stripe }, { w: lateMV / expected, bg: T.red }] : [];
+  const filtOn = byLoc || hidden.length > 0 || desc;
 
-  const LegendRow = ({ color, stripe, label, value, strong, icon }) => (
+  const Legend = ({ color, stripeBg, label, value, strong, icon }) => (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-      <span style={{ color: strong || T.sub, display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
-        {icon ? icon : <span style={{ width: 10, height: 10, borderRadius: 3, background: stripe || color, flexShrink: 0 }} />}
+      <span style={{ color: strong || T.sub, display: "flex", alignItems: "center", gap: 8, fontSize: 13.5 }}>
+        {icon || <span style={{ width: 9, height: 9, borderRadius: 3, background: stripeBg || color, flexShrink: 0 }} />}
         {label}
       </span>
-      <b style={{ color: strong || T.text, fontSize: 14.5, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(value)}</b>
+      <b style={{ color: strong || T.text, fontSize: 14, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(value)}</b>
     </div>
   );
 
-  const stripe = `repeating-linear-gradient(45deg, ${T.amber} 0 4px, ${T.amberSoft} 4px 8px)`;
-  const bar = expected > 0
-    ? [{ w: gotV / expected, bg: T.accent }, { w: openV / expected, bg: stripe }, { w: lateMV / expected, bg: T.red }]
-    : [];
-
   return (
-    <div style={{ padding: "14px 16px 0" }}>
+    <div style={{ padding: "10px 16px 0" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
         <Segmented T={T} value={tab} onChange={setTab} style={{ flex: 1 }}
           options={[["pay", "A receber"], ["got", "Recebidos"], ["work", "Trabalhados"]]} />
-        <button onClick={() => setByLoc(v => !v)} aria-label="Agrupar por local" style={{
-          width: 38, height: 38, borderRadius: 999, border: "none", cursor: "pointer", display: "grid", placeItems: "center", flexShrink: 0,
-          background: byLoc ? T.accent : T.card, color: byLoc ? T.onAccent : T.text, boxShadow: byLoc ? "none" : `inset 0 0 0 1px ${T.line}`,
-        }}><Ic path={P.filter} size={18} /></button>
+        <div style={{ position: "relative", flexShrink: 0 }}>
+          <IconBtn T={T} icon={P.filter} label="Filtros" onClick={() => setFilt(true)} />
+          {filtOn && <span style={{ position: "absolute", top: 1, right: 1, width: 9, height: 9, borderRadius: 99, background: T.accent, border: `2px solid ${T.bg}` }} />}
+        </div>
       </div>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 16 }}>
-        <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 21, color: T.text }}>{MONTHS[m]} <span style={{ color: T.sub, fontWeight: 600 }}>{y}</span></div>
         <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
-          {!isCurrent && <button onClick={() => { const t = new Date(); setCursor(new Date(t.getFullYear(), t.getMonth(), 1)); }} style={{ border: "none", background: "transparent", color: T.accent, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit", padding: "6px 8px" }}>Hoje</button>}
-          <button onClick={() => setCursor(new Date(y, m - 1, 1))} aria-label="Mês anterior" style={{ border: "none", background: "transparent", color: T.text, cursor: "pointer", padding: 6 }}><Ic path={P.chevL} size={20} /></button>
-          <button onClick={() => setCursor(new Date(y, m + 1, 1))} aria-label="Próximo mês" style={{ border: "none", background: "transparent", color: T.text, cursor: "pointer", padding: 6 }}><Ic path={P.chevR} size={20} /></button>
+          <button onClick={() => setCursor(new Date(y, m - 1, 1))} aria-label="Mês anterior" style={{ border: "none", background: "transparent", color: T.sub, cursor: "pointer", padding: "6px 4px" }}><Ic path={P.chevL} size={19} /></button>
+          <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 21, color: T.text, letterSpacing: -.3 }}>{MONTHS[m]} <span style={{ color: T.sub, fontWeight: 500 }}>{y}</span></div>
+          <button onClick={() => setCursor(new Date(y, m + 1, 1))} aria-label="Próximo mês" style={{ border: "none", background: "transparent", color: T.sub, cursor: "pointer", padding: "6px 4px" }}><Ic path={P.chevR} size={19} /></button>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {!isCurrent && <button onClick={() => { const t = new Date(); setCursor(new Date(t.getFullYear(), t.getMonth(), 1)); }} style={{ border: "none", background: "transparent", color: T.accent, fontWeight: 700, fontSize: 13.5, cursor: "pointer", fontFamily: "inherit", padding: "6px 4px" }}>Hoje</button>}
+          <button onClick={() => setData(d => ({ ...d, settings: { ...d.settings, hideValues: !d.settings.hideValues } }))}
+            aria-label={st.hideValues ? "Mostrar valores" : "Ocultar valores"}
+            style={{ border: "none", background: "transparent", color: st.hideValues ? T.accent : T.sub, cursor: "pointer", padding: 6, display: "grid", placeItems: "center" }}>
+            <Ic path={st.hideValues ? P.eyeOff : P.eye} size={19} />
+          </button>
         </div>
       </div>
 
-      {/* ── caixa do mês ── */}
-      <Card T={T} style={{ marginTop: 12, boxShadow: T.shadow }}>
+      <Card T={T} style={{ marginTop: 10 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ fontSize: 13, color: T.sub }}>{bigLabel} {MONTHS_S[m]}.</span>
-          <button onClick={() => setInfo(true)} aria-label="Como as contas são feitas" style={{ border: "none", background: T.chip, color: T.sub, width: 24, height: 24, borderRadius: 999, cursor: "pointer", fontWeight: 800, fontSize: 12, fontFamily: "inherit" }}>?</button>
+          <span style={{ fontSize: 12.5, color: T.sub }}>{bigLabel} {MONTHS_S[m]}.</span>
+          <button onClick={() => setInfo(true)} aria-label="Como as contas são feitas" style={{ border: "none", background: T.chip, color: T.sub, width: 22, height: 22, borderRadius: 999, cursor: "pointer", fontWeight: 800, fontSize: 11.5, fontFamily: "inherit" }}>?</button>
         </div>
-        <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 32, color: T.text, marginTop: 2, fontVariantNumeric: "tabular-nums", letterSpacing: -.5 }}>{fmtBRL(bigValue)}</div>
-        {tab !== "work" && (
-          <div style={{ fontSize: 12.5, color: T.sub, marginTop: 2 }}>
-            {expected > 0 ? <>de {fmtBRL(expected)} previstos no mês · <b style={{ color: T.text }}>{pct}%</b> já recebido</> : "Sem movimento financeiro previsto neste mês."}
-          </div>
-        )}
-        {tab === "work" && (
-          <div style={{ fontSize: 12.5, color: T.sub, marginTop: 2 }}>
-            {worked.length} {worked.length === 1 ? "plantão" : "plantões"} · {fmtH(workedH)}{workedH > 0 ? ` · ${fmtBRL(workedV / workedH)}/h` : ""}
-          </div>
-        )}
+        <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 33, color: T.text, marginTop: 1, fontVariantNumeric: "tabular-nums", letterSpacing: -.8 }}>{fmtBRL(bigValue)}</div>
+        <div style={{ fontSize: 12.5, color: T.sub, marginTop: 2 }}>
+          {tab === "work"
+            ? <>{worked.length} {worked.length === 1 ? "plantão" : "plantões"} · {fmtH(workedH)}{workedH > 0 ? ` · ${fmtBRL(workedV / workedH)}/h` : ""}</>
+            : expected > 0 ? <>de {fmtBRL(expected)} previstos no mês · <b style={{ color: T.text }}>{pct}%</b> já recebido</> : "Sem movimento financeiro previsto neste mês."}
+        </div>
 
         {expected > 0 && (
-          <div style={{ display: "flex", gap: 2, height: 12, borderRadius: 8, overflow: "hidden", marginTop: 14, background: T.chip }}>
+          <div style={{ display: "flex", gap: 2, height: 10, borderRadius: 6, overflow: "hidden", marginTop: 14, background: T.chip }}>
             {bar.filter(b => b.w > 0).map((b, i) => <div key={i} style={{ width: `${b.w * 100}%`, background: b.bg }} />)}
           </div>
         )}
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 7, marginTop: 14 }}>
-          <LegendRow color={T.accent} label="Recebido no mês" value={gotV} />
-          <LegendRow stripe={stripe} label="A receber (ainda vence)" value={openV} />
-          {lateMV > 0 && <LegendRow strong={T.red} icon={<Ic path={P.alert} size={13} color={T.red} />} label="Vencido neste mês" value={lateMV} />}
+        <div style={{ display: "flex", flexDirection: "column", gap: 7, marginTop: 13 }}>
+          <Legend color={T.accent} label="Recebido no mês" value={gotV} />
+          <Legend stripeBg={stripe} label="A receber (ainda vence)" value={openV} />
+          {lateMV > 0 && <Legend strong={T.red} icon={<Ic path={P.alert} size={12} color={T.red} />} label="Vencido neste mês" value={lateMV} />}
         </div>
 
         {tab !== "work" && workedV > 0 && (
-          <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${T.line}`, fontSize: 12.5, color: T.sub, lineHeight: 1.5 }}>
+          <div style={{ marginTop: 13, paddingTop: 12, borderTop: `1px solid ${T.line}`, fontSize: 12.5, color: T.sub, lineHeight: 1.5 }}>
             Trabalho de {MONTHS_S[m]}.: <b style={{ color: T.text }}>{fmtBRL(workedV)}</b> em {worked.length} {worked.length === 1 ? "plantão" : "plantões"} · {fmtH(workedH)}
-            {workedH > 0 ? ` · ${fmtBRL(workedV / workedH)}/h` : ""}
             {workedV > 0 && <> · {Math.floor(workedPaidV / workedV * 100)}% já recebido</>}
           </div>
         )}
       </Card>
 
-      {/* ── atrasados (todos os meses) ── */}
       {overdueV > 0 && (
         <button onClick={() => { setTab("pay"); if (oldOverdue.length) setCursor(new Date(pd(oldOverdue[0].paymentDate).getFullYear(), pd(oldOverdue[0].paymentDate).getMonth(), 1)); }}
-          style={{ width: "100%", textAlign: "left", marginTop: 12, background: T.redSoft, border: "none", borderRadius: 18, padding: "13px 15px", cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 11 }}>
-          <Ic path={P.alert} size={19} color={T.red} />
+          style={{ width: "100%", textAlign: "left", marginTop: 10, background: T.redSoft, border: "none", borderRadius: 18, padding: "12px 14px", cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 11 }}>
+          <Ic path={P.alert} size={18} color={T.red} />
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 800, color: T.red, fontSize: 15, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(overdueV)} atrasado</div>
-            <div style={{ fontSize: 12.5, color: T.red, opacity: .85 }}>{overdueAll.length} {overdueAll.length === 1 ? "plantão vencido e não pago" : "plantões vencidos e não pagos"}</div>
+            <div style={{ fontWeight: 800, color: T.red, fontSize: 14.5, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(overdueV)} atrasado</div>
+            <div style={{ fontSize: 12, color: T.red, opacity: .85 }}>{overdueAll.length} {overdueAll.length === 1 ? "plantão vencido e não pago" : "plantões vencidos e não pagos"}</div>
           </div>
-          <Ic path={P.chev} size={16} color={T.red} />
+          <Ic path={P.chev} size={15} color={T.red} />
         </button>
       )}
 
-      {/* ── pendente total + previsão ── */}
-      {(pendingV > 0 || forecast.some(f => f.v > 0)) && (
-        <Card T={T} style={{ marginTop: 12 }}>
+      {(pendingV > 0 || forecast.some(fc => fc.v > 0)) && (
+        <Card T={T} style={{ marginTop: 10 }}>
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-            <span style={{ fontSize: 13, color: T.sub }}>Pendente no total</span>
-            <b style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 17, color: T.text, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(pendingV)}</b>
+            <span style={{ fontSize: 12.5, color: T.sub }}>Pendente no total</span>
+            <b style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 16.5, color: T.text, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(pendingV)}</b>
           </div>
-          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          <div style={{ display: "flex", gap: 8, marginTop: 11 }}>
             {forecast.map(fc => (
               <button key={fc.key} onClick={() => setCursor(new Date(fc.d.getFullYear(), fc.d.getMonth(), 1))} style={{
-                flex: 1, border: "none", background: T.card2, borderRadius: 14, padding: "10px 8px", cursor: "pointer", fontFamily: "inherit", textAlign: "center",
+                flex: 1, border: "none", background: T.chip, borderRadius: 14, padding: "9px 6px", cursor: "pointer", fontFamily: "inherit", textAlign: "center",
               }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: .4 }}>{MONTHS_S[fc.d.getMonth()]}</div>
-                <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 14, color: fc.v ? T.text : T.sub, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>{fc.v ? fmtBRLk(fc.v) : "—"}</div>
+                <div style={{ fontSize: 10.5, fontWeight: 700, color: T.sub, textTransform: "uppercase", letterSpacing: .4 }}>{MONTHS_S[fc.d.getMonth()]}</div>
+                <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 13.5, color: fc.v ? T.text : T.sub, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>{fc.v ? fmtBRLk(fc.v) : "—"}</div>
               </button>
             ))}
           </div>
-          <div style={{ fontSize: 12, color: T.sub, marginTop: 8 }}>Previsão dos próximos meses, pelo que ainda não foi pago.</div>
         </Card>
       )}
 
-      {/* ── lista ── */}
       <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 18 }}>
         {tab === "pay" && oldOverdue.length > 0 && (
           <div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 4px 6px" }}>
-              <span style={{ fontSize: 13.5, fontWeight: 800, color: T.red, display: "flex", alignItems: "center", gap: 7 }}>
-                <Ic path={P.alert} size={14} color={T.red} /> Atrasados de meses anteriores
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 4px 6px" }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: T.red, display: "flex", alignItems: "center", gap: 7 }}>
+                <Ic path={P.alert} size={13} color={T.red} /> Atrasados de meses anteriores
               </span>
               <span style={{ fontSize: 12.5, color: T.red, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(sum(oldOverdue))}</span>
             </div>
@@ -1034,22 +1147,20 @@ function PaymentsView({ T, data, cursor, setCursor, openEdit, togglePaid, markPa
           </div>
         )}
 
-        {items.length === 0 && <div style={{ textAlign: "center", color: T.sub, fontSize: 14, padding: "30px 0" }}>{emptyMsg}</div>}
+        {items.length === 0 && <div style={{ textAlign: "center", color: T.sub, fontSize: 13.5, padding: "28px 0" }}>{emptyMsg}</div>}
 
         {groups.map(({ k, arr }) => {
           const sub = sum(arr);
           const loc = byLoc ? data.locations.find(l => l.id === k) : null;
-          const header = byLoc
-            ? (loc ? loc.name : "Sem local associado")
+          const header = byLoc ? (loc ? loc.name : "Sem local associado")
             : tab === "pay" ? `Recebe em ${fmtDateLong(k)}`
-            : tab === "got" ? `Recebido em ${fmtDateLong(k)}`
-            : fmtDateLong(k);
+            : tab === "got" ? `Recebido em ${fmtDateLong(k)}` : fmtDateLong(k);
           const openArr = arr.filter(s => !s.paid);
           return (
             <div key={k}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "8px 4px 6px" }}>
-                <span style={{ fontSize: 13.5, fontWeight: 700, color: T.text, display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
-                  {byLoc && <span style={{ width: 10, height: 10, borderRadius: 99, background: loc ? loc.color : T.sub, flexShrink: 0 }} />}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 4px 6px" }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: T.text, display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
+                  {byLoc && <span style={{ width: 9, height: 9, borderRadius: 99, background: loc ? loc.color : T.sub, flexShrink: 0 }} />}
                   <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{header}</span>
                 </span>
                 <span style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
@@ -1070,14 +1181,14 @@ function PaymentsView({ T, data, cursor, setCursor, openEdit, togglePaid, markPa
           <div>
             <button onClick={() => setOpenNoDate(v => !v)} style={{
               width: "100%", display: "flex", alignItems: "center", gap: 10, textAlign: "left", cursor: "pointer", fontFamily: "inherit",
-              background: T.amberSoft, border: "none", borderRadius: 16, padding: "12px 14px", marginTop: 6,
+              background: T.amberSoft, border: "none", borderRadius: 18, padding: "12px 14px", marginTop: 4,
             }}>
-              <Ic path={P.alert} size={17} color={T.amber} />
+              <Ic path={P.alert} size={16} color={T.amber} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13.5, fontWeight: 700, color: T.amber }}>{noDate.length} sem data de recebimento</div>
                 <div style={{ fontSize: 12, color: T.amber, opacity: .85 }}>{fmtBRL(sum(noDate))} fora da previsão de caixa</div>
               </div>
-              <span style={{ transform: openNoDate ? "rotate(90deg)" : "none", display: "grid", placeItems: "center" }}><Ic path={P.chev} size={16} color={T.amber} /></span>
+              <span style={{ transform: openNoDate ? "rotate(90deg)" : "none", display: "grid", placeItems: "center" }}><Ic path={P.chev} size={15} color={T.amber} /></span>
             </button>
             {openNoDate && (
               <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
@@ -1090,6 +1201,8 @@ function PaymentsView({ T, data, cursor, setCursor, openEdit, togglePaid, markPa
         )}
       </div>
 
+      {filt && <FilterSheet T={T} data={data} setData={setData} onClose={() => setFilt(false)} />}
+
       {info && (
         <Sheet T={T} title="Como as contas são feitas" onClose={() => setInfo(false)}>
           {[
@@ -1098,32 +1211,73 @@ function PaymentsView({ T, data, cursor, setCursor, openEdit, togglePaid, markPa
             ["A receber", "Plantões ainda não pagos, contados no mês da data prevista de recebimento."],
             ["Atrasado", "Não pago e com a data prevista já vencida. Aparece somado de todos os meses, não só do mês aberto."],
             ["Previsto no mês", "Recebido + a receber do mês. É a base da barra e do percentual."],
-            ["Pendente no total", "Tudo que ainda não foi pago, de qualquer mês."],
+            ["Não realizados", "Plantões marcados como folga, troca ou falta ficam fora de todas as contas."],
           ].map(([t, d]) => (
             <div key={t} style={{ marginBottom: 14 }}>
               <div style={{ fontWeight: 700, color: T.text, fontSize: 15 }}>{t}</div>
               <div style={{ fontSize: 13.5, color: T.sub, marginTop: 3, lineHeight: 1.5 }}>{d}</div>
             </div>
           ))}
-          <div style={{ fontSize: 13, color: T.sub, background: T.card, border: `1px solid ${T.line}`, borderRadius: 14, padding: 13, lineHeight: 1.5 }}>
+          <Card T={T} style={{ fontSize: 13, color: T.sub, lineHeight: 1.5 }}>
             Um plantão nunca é contado duas vezes na mesma conta: ou ele está em “recebidos”, ou em “a receber”.
-          </div>
+          </Card>
         </Sheet>
       )}
     </div>
   );
 }
 
+/* ── filtros da tela de pagamentos ── */
+function FilterSheet({ T, data, setData, onClose }) {
+  const st = data.settings;
+  const [g, setG] = useState(!!st.groupByLoc);
+  const [dsc, setDsc] = useState(!!st.sortDesc);
+  const [hid, setHid] = useState(st.hiddenLocs || []);
+  const list = [...data.locations.map(l => [l.id, l.name, l.color]), ["_none", "Plantões sem local", T.sub]];
+  const toggle = id => setHid(h => (h.includes(id) ? h.filter(x => x !== id) : [...h, id]));
+  const apply = () => { setData(d => ({ ...d, settings: { ...d.settings, groupByLoc: g, sortDesc: dsc, hiddenLocs: hid } })); onClose(); };
+  return (
+    <Sheet T={T} title="Filtros" onClose={onClose}
+      footer={<button onClick={apply} style={{ border: "none", background: T.accent, color: T.onAccent, fontWeight: 700, fontSize: 14, padding: "9px 8px", borderRadius: 999, cursor: "pointer", width: 62, fontFamily: "inherit" }}>OK</button>}>
+      <div style={{ ...sectionLabel(T), marginTop: 4 }}>Ordem das datas</div>
+      <Segmented T={T} value={dsc ? "desc" : "asc"} onChange={k => setDsc(k === "desc")}
+        options={[["asc", "Mais antigos primeiro"], ["desc", "Mais recentes primeiro"]]} />
+
+      <div style={sectionLabel(T)}>Agrupamento</div>
+      <div style={groupBox(T)}>
+        <FieldRow T={T} label="Agrupar por local" last><Toggle T={T} on={g} onChange={setG} /></FieldRow>
+      </div>
+
+      <div style={sectionLabel(T)}>Mostrar estes locais</div>
+      <div style={groupBox(T)}>
+        {list.map(([id, name, color], i) => (
+          <Row key={id} T={T} last={i === list.length - 1}
+            label={<span style={{ display: "flex", alignItems: "center", gap: 9 }}><span style={{ width: 10, height: 10, borderRadius: 99, background: color }} />{name}</span>}
+            onClick={() => toggle(id)}
+            right={!hid.includes(id) && <Ic path={P.check} size={16} color={T.accent} />} />
+        ))}
+      </div>
+
+      <button onClick={() => { setG(false); setDsc(false); setHid([]); }} style={{ width: "100%", marginTop: 18, border: "none", background: "transparent", color: T.red, fontWeight: 600, fontSize: 14.5, padding: 12, cursor: "pointer", fontFamily: "inherit" }}>
+        Redefinir filtros
+      </button>
+    </Sheet>
+  );
+}
+
 /* ═══════════════ RESUMO ═══════════════ */
-function SummaryView({ T, data, goToMonth }) {
+function SummaryView({ T, data, goToMonth, setData }) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [selM, setSelM] = useState(now.getMonth());
+  const [metric, setMetric] = useState("money");   // money | hours
   const yStr = String(year);
+  const st = data.settings;
 
   const months = useMemo(() => {
     const arr = Array.from({ length: 12 }, () => ({ total: 0, paid: 0, hours: 0, count: 0, got: 0 }));
     for (const s of data.shifts) {
+      if (!isOn(s)) continue;
       if (s.date.slice(0, 4) === yStr) {
         const b = arr[pd(s.date).getMonth()];
         b.total += s.value || 0; b.count++; b.hours += shiftHours(s);
@@ -1138,15 +1292,15 @@ function SummaryView({ T, data, goToMonth }) {
   const yHours = months.reduce((a, b) => a + b.hours, 0);
   const yCount = months.reduce((a, b) => a + b.count, 0);
   const yGot = months.reduce((a, b) => a + b.got, 0);
-  const yPending = useMemo(() => data.shifts.filter(s => !s.paid && s.date.slice(0, 4) === yStr).reduce((a, s) => a + (s.value || 0), 0), [data.shifts, yStr]);
-  const max = Math.max(...months.map(b => b.total), 1);
+  const yPending = useMemo(() => data.shifts.filter(s => isOn(s) && !s.paid && s.date.slice(0, 4) === yStr).reduce((a, s) => a + (s.value || 0), 0), [data.shifts, yStr]);
+  const maxV = Math.max(...months.map(b => (metric === "money" ? b.total : b.hours)), 1);
   const mSel = months[selM];
-  const goal = data.settings.monthlyGoal || 0;
+  const goal = st.monthlyGoal || 0;
 
   const locStats = useMemo(() => {
     const g = {};
     for (const s of data.shifts) {
-      if (s.date.slice(0, 4) !== yStr) continue;
+      if (!isOn(s) || s.date.slice(0, 4) !== yStr) continue;
       const k = s.locationId || "_none";
       g[k] = g[k] || { total: 0, hours: 0, count: 0, paid: 0 };
       g[k].total += s.value || 0; g[k].hours += shiftHours(s); g[k].count++;
@@ -1154,105 +1308,121 @@ function SummaryView({ T, data, goToMonth }) {
     }
     return Object.entries(g).sort((a, b) => b[1].total - a[1].total);
   }, [data.shifts, yStr]);
+  const locMax = Math.max(...locStats.map(([, v]) => (metric === "money" ? v.total : v.hours)), 1);
 
   const Stat = ({ label, value, tone }) => (
-    <div style={{ background: T.card, borderRadius: 16, border: `1px solid ${T.line}`, padding: "12px 14px" }}>
-      <div style={{ fontSize: 12, color: T.sub, fontWeight: 600 }}>{label}</div>
+    <div style={{ background: T.card, borderRadius: 18, padding: "12px 14px", boxShadow: T.shadow }}>
+      <div style={{ fontSize: 11.5, color: T.sub, fontWeight: 600 }}>{label}</div>
       <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 18, color: tone || T.text, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>{value}</div>
     </div>
   );
 
   return (
-    <div style={{ padding: "14px 16px 0" }}>
+    <div style={{ padding: "10px 16px 0" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 21, color: T.text }}>Resumo <span style={{ color: T.sub, fontWeight: 600 }}>{year}</span></div>
-        <div style={{ display: "flex", gap: 2 }}>
-          <button onClick={() => setYear(v => v - 1)} aria-label="Ano anterior" style={{ border: "none", background: "transparent", color: T.text, cursor: "pointer", padding: 6 }}><Ic path={P.chevL} size={20} /></button>
-          <button onClick={() => setYear(v => v + 1)} aria-label="Próximo ano" style={{ border: "none", background: "transparent", color: T.text, cursor: "pointer", padding: 6 }}><Ic path={P.chevR} size={20} /></button>
+        <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+          <button onClick={() => setYear(v => v - 1)} aria-label="Ano anterior" style={{ border: "none", background: "transparent", color: T.sub, cursor: "pointer", padding: "6px 4px" }}><Ic path={P.chevL} size={19} /></button>
+          <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 21, color: T.text, letterSpacing: -.3 }}>Resumo <span style={{ color: T.sub, fontWeight: 500 }}>{year}</span></div>
+          <button onClick={() => setYear(v => v + 1)} aria-label="Próximo ano" style={{ border: "none", background: "transparent", color: T.sub, cursor: "pointer", padding: "6px 4px" }}><Ic path={P.chevR} size={19} /></button>
         </div>
+        <button onClick={() => setData(d => ({ ...d, settings: { ...d.settings, hideValues: !d.settings.hideValues } }))}
+          aria-label={st.hideValues ? "Mostrar valores" : "Ocultar valores"}
+          style={{ border: "none", background: "transparent", color: st.hideValues ? T.accent : T.sub, cursor: "pointer", padding: 6, display: "grid", placeItems: "center" }}>
+          <Ic path={st.hideValues ? P.eyeOff : P.eye} size={19} />
+        </button>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9, marginTop: 12 }}>
         <Stat label="Trabalhado no ano" value={fmtBRL(yTotal)} />
-        <Stat label="Plantões" value={yCount} />
-        <Stat label="Horas trabalhadas" value={fmtH(yHours)} />
-        <Stat label="Média por hora" value={yHours ? fmtBRL(yTotal / yHours) : "—"} />
         <Stat label="Recebido no ano" value={fmtBRL(yGot)} tone={T.accent} />
         <Stat label="A receber" value={fmtBRL(yPending)} tone={yPending ? T.amber : T.text} />
+        <Stat label="Média por hora" value={yHours ? fmtBRL(yTotal / yHours) : "—"} />
+        <Stat label="Plantões" value={yCount} />
+        <Stat label="Horas trabalhadas" value={fmtH(yHours)} />
       </div>
 
-      <Card T={T} style={{ marginTop: 14 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-          <span style={{ fontSize: 13, color: T.sub, fontWeight: 600 }}>Ganhos por mês</span>
-          <span style={{ fontSize: 11.5, color: T.sub, display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 9, height: 9, borderRadius: 3, background: T.accent }} />pago</span>
-            <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 9, height: 9, borderRadius: 3, background: T.accentSoft, boxShadow: `inset 0 0 0 1px ${T.line}` }} />a receber</span>
-          </span>
+      <Card T={T} style={{ marginTop: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14 }}>
+          <span style={{ fontSize: 13, color: T.sub, fontWeight: 600 }}>{metric === "money" ? "Ganhos por mês" : "Horas por mês"}</span>
+          <Segmented T={T} value={metric} onChange={setMetric} options={[["money", "R$"], ["hours", "h"]]} style={{ width: 110 }} />
         </div>
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 5, height: 110 }}>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 104 }}>
           {months.map((b, i) => {
-            const hPct = (b.total / max) * 82;
-            const paidPct = b.total ? (b.paid / b.total) * 100 : 0;
+            const v = metric === "money" ? b.total : b.hours;
+            const paidPct = metric === "money" && b.total ? (b.paid / b.total) * 100 : 0;
             return (
               <button key={i} onClick={() => setSelM(i)} aria-label={MONTHS[i]} style={{ flex: 1, border: "none", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 5, padding: 0, height: "100%", justifyContent: "flex-end", fontFamily: "inherit" }}>
                 <div style={{
-                  width: "100%", borderRadius: 6, minHeight: b.total ? 6 : 3, height: `${hPct}%`, overflow: "hidden",
-                  background: b.total ? T.accentSoft : T.chip,
-                  boxShadow: i === selM ? `inset 0 0 0 2px ${T.accent}` : b.total ? `inset 0 0 0 1px ${T.line}` : "none",
+                  width: "100%", borderRadius: 5, minHeight: v ? 5 : 3, height: `${(v / maxV) * 82}%`, overflow: "hidden",
+                  background: v ? T.accentSoft : T.chip,
+                  boxShadow: i === selM ? `inset 0 0 0 2px ${T.accent}` : "none",
                   display: "flex", flexDirection: "column", justifyContent: "flex-end", transition: "height .25s ease",
                 }}>
-                  <div style={{ width: "100%", height: `${paidPct}%`, background: T.accent }} />
+                  {metric === "money" && <div style={{ width: "100%", height: `${paidPct}%`, background: T.accent }} />}
+                  {metric === "hours" && v > 0 && <div style={{ width: "100%", height: "100%", background: T.accent, opacity: .55 }} />}
                 </div>
-                <span style={{ fontSize: 10, fontWeight: 700, color: i === selM ? T.accent : T.sub }}>{MONTHS_S[i][0].toUpperCase()}</span>
+                <span style={{ fontSize: 9.5, fontWeight: 700, color: i === selM ? T.accent : T.sub }}>{MONTHS_S[i][0].toUpperCase()}</span>
               </button>
             );
           })}
         </div>
-        <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${T.line}` }}>
+        {metric === "money" && (
+          <div style={{ display: "flex", gap: 12, marginTop: 10, fontSize: 11.5, color: T.sub }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 9, height: 9, borderRadius: 3, background: T.accent }} />pago</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 9, height: 9, borderRadius: 3, background: T.accentSoft }} />a receber</span>
+          </div>
+        )}
+
+        <div style={{ marginTop: 14, paddingTop: 13, borderTop: `1px solid ${T.line}` }}>
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
             <span style={{ fontWeight: 700, color: T.text, fontSize: 15 }}>{MONTHS[selM]}</span>
             <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 18, color: T.text, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(mSel.total)}</span>
           </div>
-          <div style={{ fontSize: 13, color: T.sub, marginTop: 4 }}>
+          <div style={{ fontSize: 12.5, color: T.sub, marginTop: 4 }}>
             {mSel.count} {mSel.count === 1 ? "plantão" : "plantões"} · {fmtH(mSel.hours)}{mSel.hours ? ` · ${fmtBRL(mSel.total / mSel.hours)}/h` : ""}
           </div>
-          <div style={{ fontSize: 13, color: T.sub, marginTop: 3 }}>
+          <div style={{ fontSize: 12.5, color: T.sub, marginTop: 3 }}>
             Caixa do mês: <b style={{ color: T.accent }}>{fmtBRL(mSel.got)}</b> recebidos
             {mSel.total - mSel.paid > 0 && <> · <b style={{ color: T.amber }}>{fmtBRL(mSel.total - mSel.paid)}</b> a receber destes plantões</>}
           </div>
           {goal > 0 && (
-            <div style={{ marginTop: 10 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: T.sub, marginBottom: 5 }}>
+            <div style={{ marginTop: 11 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: T.sub, marginBottom: 5 }}>
                 <span>Meta mensal</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{Math.min(100, Math.round(mSel.total / goal * 100))}% de {fmtBRL(goal)}</span>
               </div>
-              <div style={{ height: 9, borderRadius: 99, background: T.chip, overflow: "hidden" }}>
+              <div style={{ height: 8, borderRadius: 99, background: T.chip, overflow: "hidden" }}>
                 <div style={{ width: `${Math.min(100, mSel.total / goal * 100)}%`, height: "100%", borderRadius: 99, background: mSel.total >= goal ? T.accent : T.amber, transition: "width .3s" }} />
               </div>
             </div>
           )}
-          <button onClick={() => goToMonth(new Date(year, selM, 1))} style={{ marginTop: 12, border: "none", background: T.chip, color: T.text, fontWeight: 600, fontSize: 13.5, padding: "9px 14px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit" }}>
+          <button onClick={() => goToMonth(new Date(year, selM, 1))} style={{ marginTop: 13, border: "none", background: T.chip, color: T.text, fontWeight: 600, fontSize: 13.5, padding: "9px 14px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit" }}>
             Ver pagamentos de {MONTHS_S[selM]}.
           </button>
         </div>
       </Card>
 
       {locStats.length > 0 && (
-        <Card T={T} style={{ marginTop: 14, marginBottom: 8 }}>
-          <div style={{ fontSize: 13, color: T.sub, fontWeight: 600, marginBottom: 4 }}>Por local · {year}</div>
+        <Card T={T} style={{ marginTop: 12, marginBottom: 8 }}>
+          <div style={{ fontSize: 13, color: T.sub, fontWeight: 600, marginBottom: 10 }}>
+            {metric === "money" ? "Receita por local" : "Horas por local"} · {year}
+          </div>
           {locStats.map(([k, v], i) => {
             const loc = data.locations.find(l => l.id === k);
+            const val = metric === "money" ? v.total : v.hours;
+            const color = loc ? loc.color : T.sub;
             return (
-              <div key={k} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", borderBottom: i === locStats.length - 1 ? "none" : `1px solid ${T.line}` }}>
-                <span style={{ width: 11, height: 11, borderRadius: 99, background: loc ? loc.color : T.sub, flexShrink: 0 }} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14.5, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{loc ? loc.name : "Sem local"}</div>
-                  <div style={{ fontSize: 12.5, color: T.sub }}>
-                    {v.count} {v.count === 1 ? "plantão" : "plantões"} · {fmtH(v.hours)}{v.hours ? ` · ${fmtBRL(v.total / v.hours)}/h` : ""}
-                  </div>
+              <div key={k} style={{ padding: "9px 0", borderBottom: i === locStats.length - 1 ? "none" : `1px solid ${T.line}` }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                  <span style={{ width: 9, height: 9, borderRadius: 99, background: color, flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0, fontWeight: 600, fontSize: 14, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{loc ? loc.name : "Sem local"}</div>
+                  <b style={{ color: T.text, fontSize: 14, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{metric === "money" ? fmtBRL(v.total) : fmtH(v.hours)}</b>
                 </div>
-                <div style={{ textAlign: "right", flexShrink: 0 }}>
-                  <b style={{ color: T.text, fontSize: 14.5, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(v.total)}</b>
-                  {v.total - v.paid > 0 && <div style={{ fontSize: 11.5, color: T.amber, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(v.total - v.paid)} a receber</div>}
+                <div style={{ height: 5, borderRadius: 99, background: T.chip, overflow: "hidden", margin: "7px 0 5px 18px" }}>
+                  <div style={{ width: `${(val / locMax) * 100}%`, height: "100%", borderRadius: 99, background: color, opacity: .85 }} />
+                </div>
+                <div style={{ fontSize: 11.5, color: T.sub, marginLeft: 18 }}>
+                  {v.count} {v.count === 1 ? "plantão" : "plantões"} · {fmtH(v.hours)}{v.hours ? ` · ${fmtBRL(v.total / v.hours)}/h` : ""}
+                  {v.total - v.paid > 0 && <> · <span style={{ color: T.amber }}>{fmtBRL(v.total - v.paid)} a receber</span></>}
                 </div>
               </div>
             );
@@ -1270,9 +1440,9 @@ function LocationsView({ T, data, saveLoc, deleteLoc }) {
     l.payType === "days" ? `Paga ${l.payValue} dias após o plantão` :
     l.payType === "fixedDay" ? `Paga todo dia ${l.payValue} do mês seguinte` : "Sem prazo definido";
   return (
-    <div style={{ padding: "14px 16px 0" }}>
+    <div style={{ padding: "10px 16px 0" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 21, color: T.text }}>Locais</div>
+        <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 21, color: T.text, letterSpacing: -.3 }}>Locais</div>
         <button onClick={() => setEditing({ id: null, name: "", address: "", color: PALETTE[1], payType: "none", payValue: 30, defaultValue: 0, defaultStart: "", defaultEnd: "" })}
           aria-label="Novo local" style={{ border: "none", background: T.accent, color: T.onAccent, width: 38, height: 38, borderRadius: 999, cursor: "pointer", display: "grid", placeItems: "center", boxShadow: T.shadow }}><Ic path={P.plus} size={18} /></button>
       </div>
@@ -1283,8 +1453,8 @@ function LocationsView({ T, data, saveLoc, deleteLoc }) {
           </div>
         )}
         {data.locations.map(l => (
-          <button key={l.id} onClick={() => setEditing({ ...l })} style={{ width: "100%", textAlign: "left", display: "flex", gap: 12, padding: "14px", background: T.card, border: `1px solid ${T.line}`, borderRadius: 18, cursor: "pointer", fontFamily: "inherit" }}>
-            <div style={{ width: 4.5, alignSelf: "stretch", borderRadius: 99, background: l.color }} />
+          <button key={l.id} onClick={() => setEditing({ ...l })} style={{ width: "100%", textAlign: "left", display: "flex", gap: 12, padding: "14px", background: T.card, border: "none", borderRadius: 20, cursor: "pointer", fontFamily: "inherit", boxShadow: T.shadow }}>
+            <div style={{ width: 4, alignSelf: "stretch", borderRadius: 99, background: l.color }} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 700, fontSize: 15.5, color: T.text }}>{l.name}</div>
               {l.address && <div style={{ fontSize: 13, color: T.sub, marginTop: 2 }}>{l.address}</div>}
@@ -1312,21 +1482,18 @@ function LocationForm({ T, initial, onSave, onDelete, onClose }) {
     <Sheet T={T} title={f.id ? "Editar local" : "Novo local"} onClose={onClose}
       footer={<button onClick={save} style={{ border: "none", background: T.accent, color: T.onAccent, fontWeight: 700, fontSize: 14, padding: "8px 8px", borderRadius: 999, cursor: "pointer", width: 60, fontFamily: "inherit" }}>Salvar</button>}>
       <input value={f.name} onChange={e => set({ name: e.target.value, _err: false })} placeholder="Nome · ex: Hospital das Clínicas"
-        style={{ ...inputStyle(T), fontSize: 17, fontWeight: 600, border: `1.5px solid ${f._err ? T.red : T.line}` }} />
+        style={{ ...inputStyle(T), fontSize: 17, fontWeight: 600, background: T.card, boxShadow: f._err ? `inset 0 0 0 1.5px ${T.red}` : T.shadow }} />
       {f._err && <div style={{ color: T.red, fontSize: 12.5, margin: "6px 4px 0" }}>Dê um nome ao local para salvar.</div>}
       <div style={{ marginTop: 10 }}>
-        <input value={f.address} onChange={e => set({ address: e.target.value })} placeholder="Endereço (opcional)" style={inputStyle(T)} />
+        <input value={f.address} onChange={e => set({ address: e.target.value })} placeholder="Endereço (opcional)" style={{ ...inputStyle(T), background: T.card, boxShadow: T.shadow }} />
       </div>
 
       <div style={label}>Cor do local</div>
       <ColorGrid T={T} value={f.color} onChange={c => set({ color: c })} />
 
       <div style={label}>Prazo de pagamento</div>
-      <div style={{ display: "flex", background: T.card, borderRadius: 14, padding: 3, boxShadow: `inset 0 0 0 1px ${T.line}` }}>
-        {[["none", "Sem prazo"], ["days", "Dias após"], ["fixedDay", "Dia fixo"]].map(([k, lab]) => (
-          <button key={k} onClick={() => set({ payType: k })} style={{ flex: 1, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 13, padding: "9px 0", borderRadius: 11, fontFamily: "inherit", background: f.payType === k ? T.accent : "transparent", color: f.payType === k ? T.onAccent : T.sub }}>{lab}</button>
-        ))}
-      </div>
+      <Segmented T={T} value={f.payType} onChange={k => set({ payType: k })}
+        options={[["none", "Sem prazo"], ["days", "Dias após"], ["fixedDay", "Dia fixo"]]} />
       {f.payType !== "none" && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
           <span style={{ color: T.text, fontSize: 14.5 }}>{f.payType === "days" ? "Paga" : "Paga todo dia"}</span>
@@ -1427,19 +1594,22 @@ function SettingsView({ T, data, setData, setDialog }) {
   };
 
   return (
-    <div style={{ padding: "14px 16px 0" }}>
-      <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 21, color: T.text }}>Ajustes</div>
+    <div style={{ padding: "10px 16px 0" }}>
+      <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 21, color: T.text, letterSpacing: -.3 }}>Ajustes</div>
 
       <div style={label}>Aparência</div>
-      <div style={{ borderRadius: 16, overflow: "hidden", border: `1px solid ${T.line}` }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 16px", background: T.card }}>
-          <span style={{ fontSize: 15.5, fontWeight: 500, color: T.text }}>Modo noturno</span>
+      <div style={groupBox(T)}>
+        <FieldRow T={T} label="Modo noturno">
           <Toggle T={T} on={!!data.settings.dark} onChange={v => setData(d => ({ ...d, settings: { ...d.settings, dark: v } }))} />
-        </div>
+        </FieldRow>
+        <FieldRow T={T} label="Ocultar valores" last>
+          <Toggle T={T} on={!!data.settings.hideValues} onChange={v => setData(d => ({ ...d, settings: { ...d.settings, hideValues: v } }))} />
+        </FieldRow>
       </div>
+      <div style={{ fontSize: 12.5, color: T.sub, margin: "7px 6px 0" }}>Com os valores ocultos o app mostra R$ •••• em todas as telas.</div>
 
       <div style={label}>Meta de ganhos</div>
-      <div style={{ borderRadius: 16, overflow: "hidden", border: `1px solid ${T.line}` }}>
+      <div style={groupBox(T)}>
         <FieldRow T={T} label="Meta mensal" last>
           <MoneyInput T={T} value={data.settings.monthlyGoal || 0} onChange={v => setData(d => ({ ...d, settings: { ...d.settings, monthlyGoal: v } }))} width={168} big />
         </FieldRow>
@@ -1447,7 +1617,7 @@ function SettingsView({ T, data, setData, setDialog }) {
       <div style={{ fontSize: 12.5, color: T.sub, margin: "7px 4px 0" }}>A meta aparece como barra de progresso na aba Resumo.</div>
 
       <div style={label}>Seus dados</div>
-      <div style={{ borderRadius: 16, overflow: "hidden", border: `1px solid ${T.line}` }}>
+      <div style={groupBox(T)}>
         <Row T={T} first label="Exportar plantões (CSV)" onClick={exportCSV} right={<Ic path={P.down} size={16} color={T.sub} />} />
         <Row T={T} label="Exportar backup completo" onClick={() => download("escala-backup.json", JSON.stringify(data, null, 2), "application/json")} right={<Ic path={P.down} size={16} color={T.sub} />} />
         <Row T={T} label="Importar backup" onClick={() => setShowImport(true)} />
@@ -1457,7 +1627,7 @@ function SettingsView({ T, data, setData, setDialog }) {
       <div style={{ fontSize: 12.5, color: T.sub, margin: "7px 4px 0", lineHeight: 1.45 }}>Tudo fica salvo automaticamente neste dispositivo. Exporte um backup de vez em quando por segurança.</div>
 
       <div style={label}>Zona de risco</div>
-      <div style={{ borderRadius: 16, overflow: "hidden", border: `1px solid ${T.line}` }}>
+      <div style={groupBox(T)}>
         <button onClick={() => setDialog({
           title: "Apagar tudo?", msg: "Todos os plantões, locais e ajustes serão removidos. Essa ação não pode ser desfeita.",
           options: [{ label: "Apagar tudo", danger: true, fn: () => setData({ shifts: [], locations: [], settings: { dark: data.settings.dark, monthlyGoal: 0 } }) }],
@@ -1472,7 +1642,7 @@ function SettingsView({ T, data, setData, setDialog }) {
         <Sheet T={T} title="Importar backup" onClose={() => setShowImport(false)}
           footer={<button onClick={doImport} style={{ border: "none", background: T.accent, color: T.onAccent, fontWeight: 700, fontSize: 14, padding: "8px 8px", borderRadius: 999, cursor: "pointer", width: 60, fontFamily: "inherit" }}>OK</button>}>
           <div style={{ fontSize: 13.5, color: T.sub, marginBottom: 10, lineHeight: 1.5 }}>Abra o arquivo <b>escala-backup.json</b>, copie todo o conteúdo e cole abaixo.</div>
-          <textarea value={importTxt} onChange={e => setImportTxt(e.target.value)} rows={8} placeholder='{"shifts":[…],"locations":[…]}' style={{ ...inputStyle(T), fontFamily: "monospace", fontSize: 12.5 }} />
+          <textarea value={importTxt} onChange={e => setImportTxt(e.target.value)} rows={8} placeholder='{"shifts":[…],"locations":[…]}' style={{ ...inputStyle(T), background: T.card, boxShadow: T.shadow, fontFamily: "monospace", fontSize: 12.5 }} />
         </Sheet>
       )}
     </div>
@@ -1480,7 +1650,7 @@ function SettingsView({ T, data, setData, setDialog }) {
 }
 
 /* ═══════════════ APP ═══════════════ */
-const DEFAULT_DATA = { shifts: [], locations: [], settings: { dark: false, monthlyGoal: 0 } };
+const DEFAULT_DATA = { shifts: [], locations: [], settings: { dark: false, monthlyGoal: 0, hideValues: false, groupByLoc: false, sortDesc: false, hiddenLocs: [] } };
 
 /* plantões antigos só tinham hora de fim e não guardavam quando o dinheiro entrou */
 const migrate = j => ({
@@ -1522,6 +1692,7 @@ function App() {
 
   const setData = setDataRaw;
   const T = THEMES[data?.settings?.dark ? "dark" : "light"];
+  setMask(data && data.settings.hideValues);
 
   if (!data) return (
     <div style={{ minHeight: "100dvh", display: "grid", placeItems: "center", background: "#EEF2F0", fontFamily: "sans-serif", color: "#63736B" }}>Carregando sua escala…</div>
@@ -1535,6 +1706,7 @@ function App() {
         id: null, seriesId: null, title: "", color: PALETTE[0], locationId: null, value: 0,
         date: d, startTime: "19:00", endTime: "07:00", endDate: addDays(d, 1),
         paymentDate: "", paid: false, paidAt: null, notes: "", repeat: { type: "none" },
+        rateType: "shift", rate: 0, notDone: false, reason: null,
       },
     });
   };
@@ -1555,6 +1727,7 @@ function App() {
     clean.value = Number(clean.value) || 0;
     clean.endDate = clean.endDate || endDateOf(clean);
     clean.paymentDate = clean.paymentDate || "";
+    if (clean.notDone) { clean.paid = false; clean.paidAt = null; } else clean.reason = null;
     clean.paidAt = clean.paid ? (clean.paidAt || payDateFor(clean)) : null;
     const endShift = daysBetween(clean.date, clean.endDate);      // quantos dias o plantão atravessa
     if (editor.mode === "create") {
@@ -1624,7 +1797,7 @@ function App() {
 
   const duplicateShift = () => {
     const s = editor.initial;
-    setEditor({ mode: "create", initial: { ...s, id: null, seriesId: null, paid: false, paidAt: null, repeat: { type: "none" } } });
+    setEditor({ mode: "create", initial: { ...s, id: null, seriesId: null, paid: false, paidAt: null, notDone: false, reason: null, repeat: { type: "none" } } });
   };
 
   const saveLoc = l => {
@@ -1663,24 +1836,26 @@ function App() {
 
       <div style={{ maxWidth: 430, margin: "0 auto", paddingBottom: "calc(122px + env(safe-area-inset-bottom))" }}>
         {tab === "cal" && <CalendarView T={T} data={data} cursor={cursor} setCursor={setCursor} sel={sel} setSel={setSel} openCreate={openCreate} openEdit={openEdit} togglePaid={togglePaid} />}
-        {tab === "pay" && <PaymentsView T={T} data={data} cursor={cursor} setCursor={setCursor} openEdit={openEdit} togglePaid={togglePaid} markPaid={markPaid} setDialog={setDialog} />}
-        {tab === "sum" && <SummaryView T={T} data={data} goToMonth={goToMonth} />}
+        {tab === "pay" && <PaymentsView T={T} data={data} cursor={cursor} setCursor={setCursor} openEdit={openEdit} togglePaid={togglePaid} markPaid={markPaid} setDialog={setDialog} setData={setData} />}
+        {tab === "sum" && <SummaryView T={T} data={data} goToMonth={goToMonth} setData={setData} />}
         {tab === "loc" && <LocationsView T={T} data={data} saveLoc={saveLoc} deleteLoc={deleteLoc} />}
         {tab === "set" && <SettingsView T={T} data={data} setData={setData} setDialog={setDialog} />}
       </div>
 
       <nav style={{
-        position: "fixed", bottom: "calc(14px + env(safe-area-inset-bottom))", left: "50%", transform: "translateX(-50%)", width: "calc(100% - 28px)", maxWidth: 402,
-        display: "flex", background: T.nav, backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)",
-        borderRadius: 999, padding: "8px 6px", boxShadow: T.shadow, border: `1px solid ${T.line}`, zIndex: 40,
+        position: "fixed", bottom: "calc(12px + env(safe-area-inset-bottom))", left: "50%", transform: "translateX(-50%)", width: "calc(100% - 24px)", maxWidth: 406,
+        display: "flex", background: T.nav, backdropFilter: "blur(20px) saturate(180%)", WebkitBackdropFilter: "blur(20px) saturate(180%)",
+        borderRadius: 999, padding: "7px 6px", boxShadow: T.shadow, border: "none", zIndex: 40,
       }}>
         {NAV.map(([k, lab, icon]) => (
           <button key={k} onClick={() => setTab(k)} aria-label={lab} style={{
-            flex: 1, border: "none", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "4px 0", fontFamily: "inherit",
+            flex: 1, border: "none", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "3px 0", fontFamily: "inherit",
             color: tab === k ? T.accent : T.sub,
           }}>
-            <Ic path={icon} size={21} sw={tab === k ? 2.2 : 1.7} />
-            <span style={{ fontSize: 10, fontWeight: tab === k ? 800 : 600, letterSpacing: .2 }}>{lab}</span>
+            <span style={{ display: "grid", placeItems: "center", width: 46, height: 26, borderRadius: 999, background: tab === k ? T.accentSoft : "transparent", transition: "background .2s" }}>
+              <Ic path={icon} size={19} sw={tab === k ? 2.1 : 1.7} />
+            </span>
+            <span style={{ fontSize: 9.5, fontWeight: tab === k ? 800 : 600, letterSpacing: .2 }}>{lab}</span>
           </button>
         ))}
       </nav>

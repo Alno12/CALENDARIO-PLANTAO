@@ -1,7 +1,7 @@
 /* Escala — service worker (offline)
    Quando atualizar o app, mude o número da versão abaixo (v1 -> v2)
    para forçar o recarregamento do cache em todos os aparelhos. */
-const CACHE = "escala-v2";
+const CACHE = "escala-v3";
 const ASSETS = [
   "./",
   "./index.html",
